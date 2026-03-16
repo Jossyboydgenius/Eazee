@@ -30,7 +30,7 @@ Create `frontend/.env.local`:
 NEXT_PUBLIC_THIRDWEB_CLIENT_ID=your_thirdweb_client_id
 THIRDWEB_SECRET_KEY=your_thirdweb_secret_key
 GEMINI_API_KEY=your_gemini_api_key
-NEXT_PUBLIC_CELO_CHAIN_ID=44787
+NEXT_PUBLIC_CELO_CHAIN_ID=11142220
 ```
 
 ## Local Development

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEazeeStore } from "@/lib/store";
 import { cn, formatNumberWithDelimiters, getTimeAgo } from "@/lib/utils";
+import { celoExplorerBaseUrl } from "@/lib/celo";
 import { toast } from "@/lib/toast";
 import calendarIcon from "@/svg/calendar.svg";
 import dollarIcon from "@/svg/dollar.svg";
@@ -587,7 +588,7 @@ function PaymentsTab() {
               </div>
 
               <a
-                href={`https://alfajores.celoscan.io/tx/${tx.txHash}`}
+                href={`${celoExplorerBaseUrl}/tx/${tx.txHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 hover:bg-[var(--bg-secondary)] transition-all"

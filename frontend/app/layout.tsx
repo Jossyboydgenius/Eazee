@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { WalletGate } from "@/components/wallet/WalletGate";
 
 export const metadata: Metadata = {
   title: "Eazee — AI WhatsApp Marketing on Celo",
@@ -48,14 +49,16 @@ export default function RootLayout({
       </head>
       <body>
         <Providers>
-          <div className="flex h-screen overflow-hidden">
-            {/* Sidebar — hidden on mobile (drawer handles mobile) */}
-            <Sidebar />
-            {/* Main content — has top padding on mobile to account for fixed topbar */}
-            <main className="flex-1 min-w-0 pt-14 md:pt-0 overflow-x-hidden overflow-y-auto">
-              {children}
-            </main>
-          </div>
+          <WalletGate>
+            <div className="flex h-screen overflow-hidden">
+              {/* Sidebar — hidden on mobile (drawer handles mobile) */}
+              <Sidebar />
+              {/* Main content — has top padding on mobile to account for fixed topbar */}
+              <main className="flex-1 min-w-0 pt-14 md:pt-0 overflow-x-hidden overflow-y-auto">
+                {children}
+              </main>
+            </div>
+          </WalletGate>
         </Providers>
       </body>
     </html>

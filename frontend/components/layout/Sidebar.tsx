@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
 import { useState } from "react";
+import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import announcementMegaphoneIcon from "@/svg/announcement-megaphone.svg";
 import calendarIcon from "@/svg/calendar.svg";
 import storeIcon from "@/svg/store.svg";
@@ -339,6 +340,10 @@ function SidebarContent({
             <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
           )}
         </button>
+
+        <div className="mt-3">
+          <WalletConnectButton compact={collapsed} />
+        </div>
       </div>
     </div>
   );
