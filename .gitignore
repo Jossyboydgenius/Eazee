@@ -1,0 +1,7 @@
+node_modules
+.next
+frontend/node_modules
+frontend/.next
+smart-contract/node_modules
+frontend/.env.local
+smart-contract/.env
