@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "celo-mcp": {
+      "command": "C:\\Users\\ADMIN\\.local\\bin\\uvx.exe",
+      "args": ["--python", "3.12", "celo-mcp"],
+      "type": "stdio"
+    }
+  },
+  "inputs": []
+}
