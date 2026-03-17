@@ -8,7 +8,8 @@ import { PostTypeSelector, ToneSelector } from "@/components/compose/Selectors";
 import { CeloPaymentToggle } from "@/components/compose/CeloPaymentToggle";
 import { WhatsAppPreview } from "@/components/compose/WhatsAppPreview";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "@/lib/toast";
 import Image, { type StaticImageData } from "next/image";
 import addAPhotoIcon from "@/svg/add-a-photo.svg";
 import tagIcon from "@/svg/tag.svg";
@@ -26,9 +27,18 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.32, ease: "easeOut" } },
 };
 
+const RETRYABLE_CAPTION_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const MAX_GENERATION_RETRIES = 2;
+const REQUEST_TIMEOUT_MS = 25000;
+
+type PremiumRouteState = "idle" | "checking" | "required" | "success" | "error";
+
 export default function ComposePage() {
   const router = useRouter();
   const [showPreview, setShowPreview] = useState(false);
+  const [premiumRouteState, setPremiumRouteState] =
+    useState<PremiumRouteState>("idle");
+  const [premiumRouteMessage, setPremiumRouteMessage] = useState("");
 
   const {
     brief,
@@ -40,8 +50,10 @@ export default function ComposePage() {
     isGenerating,
     photos,
     setGeneratedCaption,
+    setCaptionDraft,
     setIsGenerating,
     generatedCaption,
+    captionDraft,
     hasCeloPayment,
     price,
     currency,
@@ -52,49 +64,95 @@ export default function ComposePage() {
   const briefWordCount = brief.trim().split(/\s+/).filter(Boolean).length;
   const hasEnoughBriefWords = briefWordCount >= minBriefWords;
   const canGenerate = postType && hasEnoughBriefWords && tone;
+  const activeCaption = (captionDraft || generatedCaption).trim();
+  const hasCaption = Boolean(activeCaption);
 
-  const handleBriefChange = (value: string) => {
-    setBrief(value);
-    if (generatedCaption) {
-      setGeneratedCaption(value);
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!hasCeloPayment) {
+      setPremiumRouteState("idle");
+      setPremiumRouteMessage("");
+      return;
     }
-  };
+
+    const checkPremiumRoute = async () => {
+      setPremiumRouteState("checking");
+      setPremiumRouteMessage("Checking payment route...");
+
+      try {
+        const response = await fetch("/api/premium-content", {
+          method: "GET",
+          cache: "no-store",
+        });
+        const apiMessage = await extractErrorMessage(response.clone());
+
+        if (cancelled) return;
+
+        if (response.status === 402) {
+          setPremiumRouteState("required");
+          setPremiumRouteMessage(apiMessage || "Payment required");
+          return;
+        }
+
+        if (response.ok) {
+          setPremiumRouteState("success");
+          setPremiumRouteMessage(apiMessage || "Payment route ready");
+          return;
+        }
+
+        setPremiumRouteState("error");
+        setPremiumRouteMessage(apiMessage || "Payment route unavailable");
+      } catch {
+        if (cancelled) return;
+        setPremiumRouteState("error");
+        setPremiumRouteMessage("Payment route unavailable");
+      }
+    };
+
+    void checkPremiumRoute();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasCeloPayment]);
 
   async function handleGenerate() {
     if (!canGenerate || isGenerating) return;
+
+    const previousCaption = captionDraft || generatedCaption;
     setIsGenerating(true);
     setGeneratedCaption("");
+    setCaptionDraft("");
     // Auto-show preview when generating
     setShowPreview(true);
 
     try {
-      const res = await fetch("/api/generate-caption", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          postType,
-          brief,
-          tone,
-          hasCeloPayment,
-          price,
-          currency,
-        }),
+      const caption = await fetchCaptionWithRetry({
+        postType,
+        brief,
+        productName,
+        tone,
+        hasCeloPayment,
+        price,
+        currency,
+        previousCaption,
       });
-      if (!res.body) throw new Error("No stream");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullText += decoder.decode(value, { stream: true });
-        setGeneratedCaption(fullText);
-        setBrief(fullText);
-      }
+      setGeneratedCaption(caption);
+      setCaptionDraft(caption);
+      console.log("[compose] Generated caption (full):", caption);
     } catch (err) {
       console.error(err);
+      if (previousCaption) {
+        setGeneratedCaption(previousCaption);
+        setCaptionDraft(previousCaption);
+      }
+      toast({
+        title: "Caption generation failed",
+        description:
+          "Network is unstable or AI is busy. Please tap Write with AI again.",
+        variant: "error",
+      });
     } finally {
       setIsGenerating(false);
     }
@@ -174,7 +232,7 @@ export default function ComposePage() {
               />
               <textarea
                 value={brief}
-                onChange={(e) => handleBriefChange(e.target.value)}
+                onChange={(e) => setBrief(e.target.value)}
                 placeholder="Brief e.g. New ankara fabric bundle, premium quality, available in 3 sizes…"
                 rows={3}
                 maxLength={200}
@@ -213,10 +271,23 @@ export default function ComposePage() {
           <motion.div variants={item} className="glass-card p-4 sm:p-5">
             <StepHeader
               n={4}
-              title="Celo paymenet"
+              title="Celo payment"
               iconSrc={circleDollarSignIcon}
             />
             <CeloPaymentToggle />
+            {hasCeloPayment && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <PremiumStatusBadge state={premiumRouteState} />
+                {premiumRouteMessage && (
+                  <span
+                    className="text-[11px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {premiumRouteMessage}
+                  </span>
+                )}
+              </div>
+            )}
           </motion.div>
 
           {/* Mobile preview toggle */}
@@ -313,14 +384,36 @@ export default function ComposePage() {
                   </>
                 )}
               </button>
-              {generatedCaption && (
+              {hasCaption && (
                 <button onClick={resetCompose} className="btn-ghost px-4">
                   <RotateCcw className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            {generatedCaption && (
+            <div className="mt-4">
+              <p
+                className="text-xs mb-1.5 font-semibold"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Caption (editable)
+              </p>
+              <textarea
+                value={captionDraft}
+                onChange={(event) => setCaptionDraft(event.target.value)}
+                placeholder="Generated caption appears here. You can edit before scheduling."
+                rows={5}
+                className="input-base resize-none"
+              />
+              <p
+                className="text-right text-[11px] mt-1"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {captionDraft.length}/600
+              </p>
+            </div>
+
+            {hasCaption && (
               <motion.button
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -349,6 +442,148 @@ export default function ComposePage() {
         )}
       </div>
     </div>
+  );
+}
+
+interface CaptionPayload {
+  postType: string;
+  brief: string;
+  productName: string;
+  tone: string;
+  hasCeloPayment: boolean;
+  price: string;
+  currency: string;
+  previousCaption: string;
+}
+
+async function fetchCaptionWithRetry(payload: CaptionPayload): Promise<string> {
+  let attempt = 0;
+  let lastError: unknown;
+
+  while (attempt <= MAX_GENERATION_RETRIES) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const res = await fetch("/api/generate-caption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const isRetryable = RETRYABLE_CAPTION_STATUSES.has(res.status);
+        const apiMessage = await extractErrorMessage(res);
+
+        if (isRetryable && attempt < MAX_GENERATION_RETRIES) {
+          await wait(600 * 2 ** attempt);
+          attempt += 1;
+          continue;
+        }
+
+        throw new Error(
+          apiMessage || `Caption generation failed (${res.status})`,
+        );
+      }
+
+      const caption = await readCaptionText(res);
+      if (caption.length < 20) {
+        throw new Error("Generated caption is too short. Try again.");
+      }
+
+      return caption;
+    } catch (error) {
+      lastError = error;
+      const message =
+        error instanceof Error ? error.message.toLowerCase() : String(error);
+      const isAbort = error instanceof Error && error.name === "AbortError";
+      const shouldRetry =
+        (isAbort || message.includes("network")) &&
+        attempt < MAX_GENERATION_RETRIES;
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      await wait(600 * 2 ** attempt);
+      attempt += 1;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError ?? new Error("Caption generation failed");
+}
+
+async function readCaptionText(response: Response): Promise<string> {
+  if (!response.body) {
+    return (await response.text()).trim();
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    fullText += decoder.decode(value, { stream: true });
+  }
+
+  fullText += decoder.decode();
+  return fullText.trim();
+}
+
+async function extractErrorMessage(response: Response): Promise<string> {
+  try {
+    const data = await response.json();
+    if (data && typeof data === "object") {
+      if ("error" in data && typeof data.error === "string") {
+        return data.error;
+      }
+
+      if ("warning" in data && typeof data.warning === "string") {
+        return data.warning;
+      }
+
+      if ("message" in data && typeof data.message === "string") {
+        return data.message;
+      }
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function PremiumStatusBadge({ state }: { state: PremiumRouteState }) {
+  const config: Record<PremiumRouteState, { label: string; color: string }> = {
+    idle: { label: "Not checked", color: "var(--text-muted)" },
+    checking: { label: "Checking", color: "var(--text-secondary)" },
+    required: { label: "Payment required", color: "var(--brand-dark)" },
+    success: { label: "Payment success", color: "var(--brand-green)" },
+    error: { label: "Payment error", color: "var(--brand-red)" },
+  };
+
+  const { label, color } = config[state];
+
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border"
+      style={{
+        color,
+        borderColor: color,
+        background: "var(--bg-elevated)",
+      }}
+    >
+      {label}
+    </span>
   );
 }
 

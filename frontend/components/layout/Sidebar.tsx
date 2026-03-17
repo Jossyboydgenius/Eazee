@@ -341,7 +341,7 @@ function SidebarContent({
           )}
         </button>
 
-        <div className="mt-3">
+        <div className={cn("mt-3", collapsed && "overflow-hidden")}>
           <WalletConnectButton compact={collapsed} />
         </div>
       </div>

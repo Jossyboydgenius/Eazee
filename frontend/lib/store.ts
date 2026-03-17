@@ -54,6 +54,7 @@ interface EazeeStore {
   price: string;
   currency: string;
   generatedCaption: string;
+  captionDraft: string;
   isGenerating: boolean;
 
   // Schedule state
@@ -82,6 +83,7 @@ interface EazeeStore {
   setPrice: (price: string) => void;
   setCurrency: (currency: string) => void;
   setGeneratedCaption: (caption: string) => void;
+  setCaptionDraft: (caption: string) => void;
   setIsGenerating: (val: boolean) => void;
   setSelectedAccount: (id: string) => void;
   setSendTime: (time: string) => void;
@@ -160,6 +162,7 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   price: "",
   currency: "cUSD",
   generatedCaption: "",
+  captionDraft: "",
   isGenerating: false,
   selectedAccount: "1",
   sendTime: "",
@@ -184,6 +187,7 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   setPrice: (price) => set({ price }),
   setCurrency: (currency) => set({ currency }),
   setGeneratedCaption: (generatedCaption) => set({ generatedCaption }),
+  setCaptionDraft: (captionDraft) => set({ captionDraft }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setSelectedAccount: (selectedAccount) => set({ selectedAccount }),
   setSendTime: (sendTime) => set({ sendTime }),
@@ -229,6 +233,7 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
         brief: post.brief,
         tone: post.tone,
         generatedCaption: post.caption,
+        captionDraft: post.caption,
         hasCeloPayment: post.hasCeloPayment,
         price: post.price,
         currency: post.currency,
@@ -254,6 +259,7 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
       price: "",
       currency: "cUSD",
       generatedCaption: "",
+      captionDraft: "",
       isGenerating: false,
       editingPostId: null,
     }),

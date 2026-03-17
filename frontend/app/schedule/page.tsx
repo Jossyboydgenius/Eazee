@@ -132,6 +132,7 @@ export default function SchedulePage() {
     selectedGroups,
     setSelectedGroups,
     generatedCaption,
+    captionDraft,
     savePost,
     editingPostId,
     photos,
@@ -149,7 +150,8 @@ export default function SchedulePage() {
   const selectedAccountObj = waAccounts.find(
     (account) => account.id === selectedAccount,
   );
-  const captionSource = generatedCaption.trim() || brief.trim();
+  const captionSource =
+    captionDraft.trim() || generatedCaption.trim() || brief.trim();
   const postReadyCaption = captionSource
     ? captionSource.length > 90
       ? `${captionSource.slice(0, 87)}...`
@@ -157,6 +159,7 @@ export default function SchedulePage() {
     : "Your post is ready to schedule.";
   const isPostComposed =
     photos.length > 0 ||
+    Boolean(captionDraft.trim()) ||
     Boolean(generatedCaption.trim()) ||
     Boolean(brief.trim());
 
@@ -255,7 +258,7 @@ export default function SchedulePage() {
         postType,
         brief,
         tone,
-        caption: generatedCaption,
+        caption: captionSource,
         hasCeloPayment,
         price,
         currency,
@@ -924,7 +927,7 @@ export default function SchedulePage() {
             )}
           </button>
 
-          {!generatedCaption && (
+          {!captionSource && (
             <p
               className="text-center text-xs mt-2.5"
               style={{ color: "var(--text-muted)" }}

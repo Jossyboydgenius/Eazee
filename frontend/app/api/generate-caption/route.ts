@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 
-const configuredApiKey =
-  process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
-const isGemini = Boolean(process.env.GEMINI_API_KEY);
+const configuredApiKey = process.env.GEMINI_API_KEY?.trim() || "";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const model =
-  process.env.AI_MODEL || (isGemini ? DEFAULT_GEMINI_MODEL : "gpt-4o");
+const model = process.env.AI_MODEL || DEFAULT_GEMINI_MODEL;
 const MAX_RETRIES = 2;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const MIN_CAPTION_WORDS = 12;
+const CAPTION_TRUNCATED_STATUS = 422;
 
 const TONE_PLAYBOOK: Record<
   string,
@@ -46,10 +44,12 @@ export async function POST(request: Request) {
     const {
       postType,
       brief,
+      productName,
       tone: rawTone,
       hasCeloPayment,
       price,
       currency,
+      previousCaption,
     } = await request.json();
 
     const normalizedTone = String(rawTone || "friendly").toLowerCase();
@@ -63,31 +63,45 @@ export async function POST(request: Request) {
       );
     }
 
-    const celoInstructions =
+    const paymentDetails =
       hasCeloPayment && price
-        ? `\n\nIMPORTANT: End the caption with a clear call-to-action for payment:\n"💳 Pay with ${currency}: $${price}\nTap Buy Now 👇"\n\nMake this feel natural and exciting.`
-        : "";
+        ? `Payment details to include naturally: ${currency || "cUSD"} ${price}.`
+        : "No payment line required unless it naturally fits.";
+
+    const productLine = productName
+      ? `Product name: ${productName}`
+      : "Product name not provided. Derive from the brief.";
+
+    const variationLine = previousCaption
+      ? `Previous caption to avoid repeating too closely:\n${previousCaption}`
+      : "No previous caption provided.";
 
     const systemPrompt = `You are an expert WhatsApp marketing copywriter specializing in African e-commerce. Write compelling captions for WhatsApp Status and Groups.
 
 RULES:
-  - Keep it under 200 words
+  - Write 40-90 words only
   - Use 2-5 relevant emojis naturally (not spammy)
   - Include 1-2 relevant hashtags at the end
   - Keep language personal, not corporate
+  - Output complete sentences only (never end mid-word or mid-sentence)
+  - Do not use markdown, code fences, or labels
+  - Ensure the core offer, context, and CTA are clear
 
   TONE PROFILE (${tone.toUpperCase()}):
   - Voice: ${toneGuide.voice}
   - Urgency style: ${toneGuide.urgency}
-  - CTA style: ${toneGuide.ctaStyle}${celoInstructions}`;
+  - CTA style: ${toneGuide.ctaStyle}`;
 
     const userPrompt = `Write one WhatsApp marketing caption.
 
 Post Type: ${postType}
 Brief: ${brief}
+${productLine}
 Tone: ${tone}
+${paymentDetails}
+${variationLine}
 
-  Return only the final caption text.`;
+Return only the final caption text.`;
 
     const mockCaption = generateMockCaption(
       postType,
@@ -98,53 +112,38 @@ Tone: ${tone}
       currency,
     );
 
-    // Try streaming first, fall back to regular if no API key
     if (
       !configuredApiKey ||
       configuredApiKey === "your_gemini_api_key" ||
-      configuredApiKey === "your_openai_api_key" ||
       configuredApiKey === "your_ai_api_key"
     ) {
       return createMockCaptionResponse(mockCaption, "missing_api_key");
     }
 
-    const openai = new OpenAI({
-      apiKey: configuredApiKey,
-      ...(isGemini
-        ? {
-            baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-          }
-        : {}),
-    });
-
-    let stream;
+    let caption;
     try {
-      stream = await createCompletionStream(openai, systemPrompt, userPrompt);
-    } catch (streamError) {
-      const status = getErrorStatus(streamError);
-      if (isGemini && status && RETRYABLE_STATUSES.has(status)) {
+      caption = await createCompletionText(systemPrompt, userPrompt);
+      console.info("[generate-caption] Generated caption (full):", caption);
+      console.info("[generate-caption] Caption length:", caption.length);
+    } catch (completionError) {
+      const status = getErrorStatus(completionError);
+      if (status === CAPTION_TRUNCATED_STATUS) {
+        console.warn(
+          "Gemini caption generation produced truncated/short output. Returning mock caption.",
+        );
+        return createMockCaptionResponse(mockCaption, "gemini_truncated");
+      }
+
+      if (status && RETRYABLE_STATUSES.has(status)) {
         console.warn(
           `Gemini caption generation fallback triggered (status ${status}). Returning mock caption.`,
         );
         return createMockCaptionResponse(mockCaption, `gemini_${status}`);
       }
-      throw streamError;
+      throw completionError;
     }
 
-    const encoder = new TextEncoder();
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        for await (const chunk of stream) {
-          const text = chunk.choices[0]?.delta?.content || "";
-          if (text) {
-            controller.enqueue(encoder.encode(text));
-          }
-        }
-        controller.close();
-      },
-    });
-
-    return new Response(readableStream, {
+    return new Response(caption, {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   } catch (error) {
@@ -195,33 +194,73 @@ function generateMockCaption(
   return caption;
 }
 
-async function createCompletionStream(
-  openai: OpenAI,
-  systemPrompt: string,
-  userPrompt: string,
-) {
+async function createCompletionText(systemPrompt: string, userPrompt: string) {
   let attempt = 0;
   let lastError: unknown;
 
   while (attempt <= MAX_RETRIES) {
     try {
-      return await openai.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 300,
-        temperature: model.includes("gemini") ? 1 : 0.8,
-        stream: true,
-      });
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          model,
+        )}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": configuredApiKey,
+          },
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [{ text: systemPrompt }],
+            },
+            contents: [
+              {
+                parts: [{ text: userPrompt }],
+              },
+            ],
+            generationConfig: {
+              temperature: 1.0,
+              topP: 0.9,
+              topK: 40,
+              maxOutputTokens: 360,
+            },
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorBody = await safeParseJson(response);
+        throw {
+          status: response.status,
+          body: errorBody,
+          headers: response.headers,
+        };
+      }
+
+      const data = await response.json();
+      const text = extractGeminiText(data);
+
+      if (text.length < 20) {
+        throw {
+          status: CAPTION_TRUNCATED_STATUS,
+          message: "Caption response too short",
+        };
+      }
+
+      if (isLikelyTruncatedCaption(text)) {
+        throw {
+          status: CAPTION_TRUNCATED_STATUS,
+          message: "Caption appears truncated",
+        };
+      }
+
+      return text;
     } catch (error) {
       lastError = error;
       const status = getErrorStatus(error);
       const shouldRetry =
-        isGemini &&
-        status !== undefined &&
-        RETRYABLE_STATUSES.has(status) &&
+        (status === undefined || RETRYABLE_STATUSES.has(status)) &&
         attempt < MAX_RETRIES;
 
       if (!shouldRetry) {
@@ -236,6 +275,57 @@ async function createCompletionStream(
   }
 
   throw lastError;
+}
+
+function extractGeminiText(data: unknown): string {
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+
+  const candidates = (data as { candidates?: unknown[] }).candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return "";
+  }
+
+  const firstCandidate = candidates[0] as {
+    content?: { parts?: Array<{ text?: string }> };
+  };
+
+  const parts = firstCandidate.content?.parts;
+  if (!Array.isArray(parts)) {
+    return "";
+  }
+
+  return parts
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
+    .join("")
+    .trim();
+}
+
+function isLikelyTruncatedCaption(text: string): boolean {
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  if (wordCount < MIN_CAPTION_WORDS) {
+    return true;
+  }
+
+  const endsWithStrongPunctuation = /[.!?…]$/.test(text);
+  const endsWithHashtag = /#[\p{L}\p{N}_]+$/u.test(text);
+  const endsWithEmoji = /\p{Extended_Pictographic}$/u.test(text);
+  const endsWithOrphanDigit = /\s\d$/.test(text);
+
+  if (endsWithOrphanDigit) {
+    return true;
+  }
+
+  return !(endsWithStrongPunctuation || endsWithHashtag || endsWithEmoji);
+}
+
+async function safeParseJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
 function createMockCaptionResponse(caption: string, reason: string) {

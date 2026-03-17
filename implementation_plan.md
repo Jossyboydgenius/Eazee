@@ -320,6 +320,14 @@ npm run compile
 
 Real automation and scheduled posting are feasible using Meta WhatsApp Cloud API + a scheduler worker.
 
+Context7-confirmed send payloads require `recipient_type: "individual"` for outbound message calls, and there is no native "send later" endpoint in Cloud API. Scheduling must be owned by Eazee (queue/cron/worker) and dispatch at due time.
+
+#### Delivery Target mapping (best-practical implementation)
+
+- **Status**: Not supported by Cloud API message send endpoints. Keep this as a separate adapter mode (device-linked automation path) rather than Cloud API.
+- **Groups**: No Cloud API send-to-group endpoint is documented in the messaging send flow; model this as managed audience segments and fan-out to members (individual sends).
+- **Broadcast**: Implement as app-level broadcast fan-out (segment of opted-in contacts) with rate limiting + deduplication.
+
 #### Outbound send (confirmed structure)
 
 Context7 docs show versioned Graph API call shape:
@@ -372,6 +380,13 @@ Implementation rules:
 - `POST /api/whatsapp/send` — sends message via Graph API
 - `GET /api/whatsapp/webhook` — verify callback
 - `POST /api/whatsapp/webhook` — ingest messages/statuses
+- `POST /api/whatsapp/dispatch-due` — internal worker endpoint for due scheduled jobs
+
+#### Suggested queue model for auto-send at schedule time
+
+- `scheduled_posts` table: `id`, `caption`, `media`, `scheduled_at`, `delivery_target`, `status`
+- `audience_members` table: one row per recipient with `post_id`, `phone`, `state`, `wamid`, `attempt_count`
+- Worker tick: pick due `scheduled_posts`, expand audience, enqueue sends, update per-recipient state from webhook statuses
 
 ---
 
@@ -453,6 +468,11 @@ Recommended flow:
 1. Fix Node + TS config and pass `smart-contract` compile.
 2. Normalize contract path and deploy to active target network.
 3. Wire frontend contract bindings + Buy Now write flow.
-4. Scaffold WhatsApp send + webhook routes.
-5. Connect scheduler worker to WhatsApp send route and persist `wamid/status`.
-6. Run full frontend build and smoke-test compose → schedule → dashboard flow.
+4. ✅ Scaffolded WhatsApp backend phase in frontend:
+   - `POST /api/whatsapp/send`
+   - `GET|POST /api/whatsapp/webhook`
+   - `POST /api/whatsapp/dispatch-due`
+   - shared queue module in `frontend/lib/whatsappQueue.ts`
+5. Connect Schedule UI save flow to enqueue API with recipient mapping for target fan-out.
+6. Persist queue + webhook status to DB (replace in-memory runtime state).
+7. Run full frontend build and smoke-test compose → schedule → dashboard flow.
