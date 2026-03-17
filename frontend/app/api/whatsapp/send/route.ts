@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import {
+  getWhatsAppTemplateFallbackConfig,
   isWhatsAppCloudConfigured,
-  sendWhatsAppTextMessage,
+  sendWhatsAppMessageWithDeadlineFallback,
+  sendWhatsAppTemplateMessage,
 } from "@/lib/whatsappCloud";
 
 export const runtime = "nodejs";
@@ -11,15 +13,36 @@ export async function POST(request: Request) {
     const body = await request.json();
     const to = String(body?.to || "");
     const textBody = String(body?.body || "");
+    const type = String(
+      body?.type ||
+        (typeof body?.templateName === "string" ? "template" : "text"),
+    );
     const targetType = String(body?.targetType || "individual");
     const contextMessageId =
       typeof body?.contextMessageId === "string"
         ? body.contextMessageId
         : undefined;
+    const templateName =
+      typeof body?.templateName === "string" ? body.templateName.trim() : "";
+    const templateLanguageCode =
+      typeof body?.templateLanguageCode === "string"
+        ? body.templateLanguageCode.trim()
+        : undefined;
+    const templateBodyParameters = Array.isArray(body?.templateBodyParameters)
+      ? body.templateBodyParameters
+          .map((value: unknown) => String(value).trim())
+          .filter(Boolean)
+      : undefined;
+    const templateHeaderImageUrl =
+      typeof body?.templateHeaderImageUrl === "string"
+        ? body.templateHeaderImageUrl.trim()
+        : undefined;
+    const enableDeadlineTemplateFallback =
+      body?.enableDeadlineTemplateFallback !== false;
 
-    if (!to || !textBody) {
+    if (!to) {
       return NextResponse.json(
-        { error: "Missing required fields: to, body" },
+        { error: "Missing required field: to" },
         { status: 400 },
       );
     }
@@ -34,11 +57,47 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await sendWhatsAppTextMessage({
-      to,
-      body: textBody,
-      contextMessageId,
-    });
+    let result;
+
+    if (type === "template") {
+      if (!templateName) {
+        return NextResponse.json(
+          {
+            error:
+              "Missing required field: templateName (required when type='template').",
+          },
+          { status: 400 },
+        );
+      }
+
+      result = await sendWhatsAppTemplateMessage({
+        to,
+        templateName,
+        languageCode: templateLanguageCode,
+        bodyParameters: templateBodyParameters,
+        headerImageUrl: templateHeaderImageUrl,
+      });
+    } else {
+      if (!textBody) {
+        return NextResponse.json(
+          {
+            error: "Missing required field: body (required when type='text').",
+          },
+          { status: 400 },
+        );
+      }
+
+      result = await sendWhatsAppMessageWithDeadlineFallback({
+        to,
+        body: textBody,
+        contextMessageId,
+        enableDeadlineTemplateFallback,
+        fallbackTemplateName: templateName || undefined,
+        fallbackTemplateLanguageCode: templateLanguageCode,
+        fallbackTemplateBodyParameters: templateBodyParameters,
+        fallbackTemplateHeaderImageUrl: templateHeaderImageUrl,
+      });
+    }
 
     if (!result.ok) {
       return NextResponse.json(
@@ -67,9 +126,13 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
+  const templateFallback = getWhatsAppTemplateFallbackConfig();
+
   return NextResponse.json({
     configured: isWhatsAppCloudConfigured(),
     supportedRecipientType: "individual",
+    supportedMessageTypes: ["text", "template"],
+    deadlineTemplateFallback: templateFallback,
     endpoint: "POST /api/whatsapp/send",
   });
 }

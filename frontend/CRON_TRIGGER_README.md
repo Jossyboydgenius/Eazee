@@ -28,13 +28,18 @@ Authorization: Bearer <CRON_SECRET>
   "crons": [
     {
       "path": "/api/whatsapp/dispatch-due",
-      "schedule": "*/2 * * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }
 ```
 
-This runs every 2 minutes.
+This runs once daily at 09:00 UTC (Hobby-compatible).
+
+If you need sub-daily dispatch in production:
+
+- Upgrade to Vercel Pro and use a more frequent cron expression, or
+- Use an external scheduler (GitHub Actions, cron-job.org, etc.) to call `POST /api/whatsapp/dispatch-due` with `Authorization: Bearer <CRON_SECRET>`.
 
 ## 3) Why GET is used for cron
 

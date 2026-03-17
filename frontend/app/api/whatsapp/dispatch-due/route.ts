@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sendWhatsAppTextMessage } from "@/lib/whatsappCloud";
+import { sendWhatsAppMessageWithDeadlineFallback } from "@/lib/whatsappCloud";
 import {
   getDueWhatsAppJobs,
   listWhatsAppJobs,
@@ -72,9 +72,13 @@ async function dispatchDueJobs(request: Request) {
         continue;
       }
 
-      const result = await sendWhatsAppTextMessage({
+      const result = await sendWhatsAppMessageWithDeadlineFallback({
         to: target.recipient,
         body: job.caption,
+        fallbackTemplateName: job.templateName,
+        fallbackTemplateLanguageCode: job.templateLanguageCode,
+        fallbackTemplateBodyParameters: job.templateBodyParameters,
+        fallbackTemplateHeaderImageUrl: job.templateHeaderImageUrl,
       });
 
       if (result.ok) {

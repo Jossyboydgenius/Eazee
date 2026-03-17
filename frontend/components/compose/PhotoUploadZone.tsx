@@ -63,14 +63,21 @@ export function PhotoUploadZone() {
       }
 
       const toAdd = acceptedFiles.slice(0, remaining);
-      toAdd.forEach((file) => {
-        const photo: UploadedPhoto = {
-          id: `${Date.now()}-${Math.random()}`,
-          file,
-          preview: URL.createObjectURL(file),
-        };
-        addPhoto(photo);
-      });
+      void (async () => {
+        const previews = await Promise.all(
+          toAdd.map((file) => readFileAsDataUrl(file)),
+        );
+
+        previews.forEach((preview, index) => {
+          const file = toAdd[index];
+          const photo: UploadedPhoto = {
+            id: `${Date.now()}-${Math.random()}`,
+            file,
+            preview,
+          };
+          addPhoto(photo);
+        });
+      })();
 
       const discarded = acceptedFiles.length - toAdd.length;
       if (discarded > 0) {
@@ -268,4 +275,20 @@ export function PhotoUploadZone() {
       </AnimatePresence>
     </div>
   );
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Unable to read image file"));
+    };
+    reader.onerror = () => reject(new Error("Unable to read image file"));
+    reader.readAsDataURL(file);
+  });
 }

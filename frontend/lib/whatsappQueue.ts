@@ -24,6 +24,10 @@ export type WhatsAppDispatchStatus =
 export interface WhatsAppDispatchJob {
   id: string;
   caption: string;
+  templateName?: string;
+  templateLanguageCode?: string;
+  templateBodyParameters?: string[];
+  templateHeaderImageUrl?: string;
   postType: string;
   brief: string;
   tone: string;
@@ -46,6 +50,10 @@ export interface WhatsAppDispatchJob {
 
 export interface NewWhatsAppDispatchJob {
   caption: string;
+  templateName?: string;
+  templateLanguageCode?: string;
+  templateBodyParameters?: string[];
+  templateHeaderImageUrl?: string;
   postType: string;
   brief: string;
   tone: string;

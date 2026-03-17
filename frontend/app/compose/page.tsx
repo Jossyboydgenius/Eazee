@@ -79,6 +79,10 @@ export default function ComposePage() {
   const canGenerate = postType && hasEnoughBriefWords && tone;
   const activeCaption = (captionDraft || generatedCaption).trim();
   const hasCaption = Boolean(activeCaption);
+  const shouldShowPremiumStatus =
+    hasCeloPayment &&
+    premiumRouteState !== "idle" &&
+    premiumRouteState !== "mock";
 
   useEffect(() => {
     let cancelled = false;
@@ -111,12 +115,8 @@ export default function ComposePage() {
 
         if (response.ok) {
           if (payload.mode === "mock") {
-            setPremiumRouteState("mock");
-            setPremiumRouteMessage(
-              payload.warning ||
-                apiMessage ||
-                "x402 mock mode active. Payments are not enforced in this mode.",
-            );
+            setPremiumRouteState("idle");
+            setPremiumRouteMessage("");
             return;
           }
 
@@ -251,13 +251,13 @@ export default function ComposePage() {
               <input
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
-                placeholder="Product name e.g. Ankara Fabric Bundle"
+                placeholder="Product name"
                 className="input-base"
               />
               <textarea
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
-                placeholder="Brief e.g. New ankara fabric bundle, premium quality, available in 3 sizes…"
+                placeholder="Brief description of what you are selling"
                 rows={3}
                 maxLength={200}
                 className="input-base resize-none mt-3"
@@ -299,7 +299,7 @@ export default function ComposePage() {
               iconSrc={circleDollarSignIcon}
             />
             <CeloPaymentToggle />
-            {hasCeloPayment && (
+            {shouldShowPremiumStatus && (
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <PremiumStatusBadge state={premiumRouteState} />
                 {premiumRouteMessage && (

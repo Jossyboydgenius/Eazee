@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/whatsapp/dispatch-due",
-      "schedule": "*/2 * * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }

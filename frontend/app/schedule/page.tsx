@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEazeeStore } from "@/lib/store";
 import { useRouter } from "next/navigation";
@@ -14,6 +14,7 @@ import {
   Phone,
   ChevronDown,
   Sparkles,
+  FileText,
   Plus,
   Repeat,
   type LucideIcon,
@@ -79,6 +80,77 @@ const TIME_CHIPS = [
   "21:00",
 ];
 const AI_TAG_TIMES = ["7:00", "15:00"];
+const TEMPLATE_LANGUAGE_OPTIONS = [
+  { value: "en_US", label: "English (US) — en_US" },
+  { value: "en_GB", label: "English (UK) — en_GB" },
+  { value: "en", label: "English (generic) — en" },
+];
+const TEMPLATE_FALLBACK_STORAGE_KEY = "eazee-template-fallback-by-account";
+const DEFAULT_TEMPLATE_FALLBACK_ACCOUNT_KEY = "__default__";
+
+interface TemplateFallbackDraft {
+  useTemplateFallback: boolean;
+  templateName: string;
+  templateLanguageCode: string;
+  templateBodyParamsInput: string;
+  templateHeaderImageUrl: string;
+}
+
+type TemplateFallbackDraftByAccount = Record<string, TemplateFallbackDraft>;
+
+const DEFAULT_TEMPLATE_FALLBACK_DRAFT: TemplateFallbackDraft = {
+  useTemplateFallback: true,
+  templateName: "hello_world",
+  templateLanguageCode: "en_US",
+  templateBodyParamsInput: "",
+  templateHeaderImageUrl: "",
+};
+
+function canUseBrowserStorage(): boolean {
+  return (
+    typeof window !== "undefined" && typeof window.localStorage !== "undefined"
+  );
+}
+
+function getTemplateFallbackAccountKey(accountId: string): string {
+  const trimmed = accountId.trim();
+  return trimmed || DEFAULT_TEMPLATE_FALLBACK_ACCOUNT_KEY;
+}
+
+function readTemplateFallbackDraftByAccount(): TemplateFallbackDraftByAccount {
+  if (!canUseBrowserStorage()) {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TEMPLATE_FALLBACK_STORAGE_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw) as TemplateFallbackDraftByAccount;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeTemplateFallbackDraftByAccount(
+  draftsByAccount: TemplateFallbackDraftByAccount,
+): void {
+  if (!canUseBrowserStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      TEMPLATE_FALLBACK_STORAGE_KEY,
+      JSON.stringify(draftsByAccount),
+    );
+  } catch {
+    // Ignore localStorage write failures.
+  }
+}
 
 const container = {
   hidden: { opacity: 0 },
@@ -189,6 +261,23 @@ export default function SchedulePage() {
   const [newAccountNumberError, setNewAccountNumberError] = useState("");
   const [timeMode, setTimeMode] = useState<"ai" | "custom">("ai");
   const [isScheduling, setIsScheduling] = useState(false);
+  const [showTemplateLanguageMenu, setShowTemplateLanguageMenu] =
+    useState(false);
+  const [useTemplateFallback, setUseTemplateFallback] = useState(
+    DEFAULT_TEMPLATE_FALLBACK_DRAFT.useTemplateFallback,
+  );
+  const [templateName, setTemplateName] = useState(
+    DEFAULT_TEMPLATE_FALLBACK_DRAFT.templateName,
+  );
+  const [templateLanguageCode, setTemplateLanguageCode] = useState(
+    DEFAULT_TEMPLATE_FALLBACK_DRAFT.templateLanguageCode,
+  );
+  const [templateBodyParamsInput, setTemplateBodyParamsInput] = useState(
+    DEFAULT_TEMPLATE_FALLBACK_DRAFT.templateBodyParamsInput,
+  );
+  const [templateHeaderImageUrl, setTemplateHeaderImageUrl] = useState(
+    DEFAULT_TEMPLATE_FALLBACK_DRAFT.templateHeaderImageUrl,
+  );
 
   const selectedAccountObj = waAccounts.find(
     (account) => account.id === selectedAccount,
@@ -224,7 +313,54 @@ export default function SchedulePage() {
     selectedAccount &&
     (timeMode === "custom" ? customDateTime : sendTime) &&
     targets.length > 0 &&
-    (!targets.includes("groups") || selectedGroups.length > 0);
+    (!targets.includes("groups") || selectedGroups.length > 0) &&
+    (!useTemplateFallback || Boolean(templateName.trim()));
+
+  const templateBodyParameters = templateBodyParamsInput
+    .split("|")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const templateHeaderImageUrlValue = templateHeaderImageUrl.trim();
+  const selectedTemplateLanguageOption =
+    TEMPLATE_LANGUAGE_OPTIONS.find(
+      (option) => option.value === templateLanguageCode,
+    ) || TEMPLATE_LANGUAGE_OPTIONS[0];
+
+  useEffect(() => {
+    const accountKey = getTemplateFallbackAccountKey(selectedAccount);
+    const draftsByAccount = readTemplateFallbackDraftByAccount();
+    const draft =
+      draftsByAccount[accountKey] || DEFAULT_TEMPLATE_FALLBACK_DRAFT;
+
+    setUseTemplateFallback(Boolean(draft.useTemplateFallback));
+    setTemplateName(draft.templateName || "hello_world");
+    setTemplateLanguageCode(draft.templateLanguageCode || "en_US");
+    setTemplateBodyParamsInput(draft.templateBodyParamsInput || "");
+    setTemplateHeaderImageUrl(draft.templateHeaderImageUrl || "");
+    setShowTemplateLanguageMenu(false);
+  }, [selectedAccount]);
+
+  useEffect(() => {
+    const accountKey = getTemplateFallbackAccountKey(selectedAccount);
+    const draftsByAccount = readTemplateFallbackDraftByAccount();
+
+    draftsByAccount[accountKey] = {
+      useTemplateFallback,
+      templateName,
+      templateLanguageCode,
+      templateBodyParamsInput,
+      templateHeaderImageUrl,
+    };
+
+    writeTemplateFallbackDraftByAccount(draftsByAccount);
+  }, [
+    selectedAccount,
+    useTemplateFallback,
+    templateName,
+    templateLanguageCode,
+    templateBodyParamsInput,
+    templateHeaderImageUrl,
+  ]);
 
   const formatWhatsAppNumber = (value: string) => {
     const digitsOnly = value.replace(/\D/g, "");
@@ -308,6 +444,17 @@ export default function SchedulePage() {
         },
         body: JSON.stringify({
           caption: captionSource,
+          templateName: useTemplateFallback ? templateName.trim() : undefined,
+          templateLanguageCode: useTemplateFallback
+            ? templateLanguageCode.trim()
+            : undefined,
+          templateBodyParameters: useTemplateFallback
+            ? templateBodyParameters
+            : undefined,
+          templateHeaderImageUrl:
+            useTemplateFallback && templateHeaderImageUrlValue
+              ? templateHeaderImageUrlValue
+              : undefined,
           postType,
           brief,
           tone,
@@ -354,6 +501,17 @@ export default function SchedulePage() {
         brief,
         tone,
         caption: captionSource,
+        templateName: useTemplateFallback ? templateName.trim() : undefined,
+        templateLanguageCode: useTemplateFallback
+          ? templateLanguageCode.trim()
+          : undefined,
+        templateBodyParameters: useTemplateFallback
+          ? templateBodyParameters
+          : undefined,
+        templateHeaderImageUrl:
+          useTemplateFallback && templateHeaderImageUrlValue
+            ? templateHeaderImageUrlValue
+            : undefined,
         hasCeloPayment,
         price,
         currency,
@@ -627,7 +785,7 @@ export default function SchedulePage() {
                               }}
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              placeholder="WhatsApp number (e.g. 2348012345678)"
+                              placeholder="WhatsApp number (include country code)"
                               className="input-base"
                             />
                             {newAccountNumberError && (
@@ -668,6 +826,203 @@ export default function SchedulePage() {
               )}
             </AnimatePresence>
           </div>
+        </motion.div>
+
+        <motion.div variants={item} className="glass-card p-4 sm:p-5">
+          <StepHeader icon={FileText} label="Template Fallback" />
+
+          <button
+            onClick={() => setUseTemplateFallback((value) => !value)}
+            className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition-all"
+            style={{
+              background: "var(--bg-elevated)",
+              borderColor: "var(--border)",
+            }}
+          >
+            <div>
+              <p
+                className="text-sm font-semibold"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Use approved template when text send is blocked
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Recommended for pre-verification/demo reliability.
+              </p>
+            </div>
+            <div
+              className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+              style={{
+                borderColor: useTemplateFallback
+                  ? "var(--brand-green)"
+                  : "var(--border)",
+                background: useTemplateFallback
+                  ? "var(--brand-green)"
+                  : "transparent",
+              }}
+            >
+              {useTemplateFallback && (
+                <Check className="w-3 h-3 text-white" strokeWidth={3} />
+              )}
+            </div>
+          </button>
+
+          {useTemplateFallback && (
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Template name (required)
+                </p>
+                <input
+                  value={templateName}
+                  onChange={(event) => setTemplateName(event.target.value)}
+                  placeholder="e.g. hello_world or eazee_offer_v1"
+                  className="input-base"
+                />
+                <p
+                  className="text-[11px]"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Use the exact approved template slug from WhatsApp Manager.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Language code (required)
+                </p>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowTemplateLanguageMenu((open) => !open)}
+                    className="w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all"
+                    style={{
+                      background: "var(--bg-elevated)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p
+                        className="text-sm font-semibold truncate"
+                        style={{ color: "var(--text-primary)" }}
+                      >
+                        {selectedTemplateLanguageOption.label}
+                      </p>
+                      <p
+                        className="text-xs truncate"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        Approved template locale
+                      </p>
+                    </div>
+                    <ChevronDown
+                      className={cn(
+                        "w-4 h-4 shrink-0 transition-transform",
+                        showTemplateLanguageMenu && "rotate-180",
+                      )}
+                      style={{ color: "var(--text-muted)" }}
+                    />
+                  </button>
+
+                  <AnimatePresence>
+                    {showTemplateLanguageMenu && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        className="absolute top-full left-0 right-0 mt-1.5 rounded-xl border overflow-hidden z-40 shadow-xl"
+                        style={{
+                          background: "var(--bg-card)",
+                          borderColor: "var(--border)",
+                        }}
+                      >
+                        {TEMPLATE_LANGUAGE_OPTIONS.map((option) => {
+                          const isSelected =
+                            option.value === templateLanguageCode;
+
+                          return (
+                            <button
+                              key={option.value}
+                              onClick={() => {
+                                setTemplateLanguageCode(option.value);
+                                setShowTemplateLanguageMenu(false);
+                              }}
+                              className={cn(
+                                "w-full flex items-center gap-3 px-4 py-3.5 text-sm transition-all text-left",
+                                isSelected ? "font-semibold" : "",
+                              )}
+                              style={{
+                                color: isSelected
+                                  ? "var(--brand-dark)"
+                                  : "var(--text-secondary)",
+                                background: isSelected
+                                  ? "var(--brand-dim)"
+                                  : "transparent",
+                              }}
+                            >
+                              <span className="flex-1 truncate">
+                                {option.label}
+                              </span>
+                              {isSelected && (
+                                <Check className="w-4 h-4 ml-auto" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+                <p
+                  className="text-[11px]"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Must match the exact approved language on WhatsApp Manager.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Body parameters (optional)
+                </p>
+                <input
+                  value={templateBodyParamsInput}
+                  onChange={(event) =>
+                    setTemplateBodyParamsInput(event.target.value)
+                  }
+                  placeholder="Use | separator, e.g. Ada|Fabric Bundle|15%|31 Mar"
+                  className="input-base"
+                />
+                <p
+                  className="text-[11px]"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Order must match template placeholders in sequence (1st, 2nd,
+                  3rd, ...).
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Media header image URL (optional)
+                </p>
+                <input
+                  value={templateHeaderImageUrl}
+                  onChange={(event) =>
+                    setTemplateHeaderImageUrl(event.target.value)
+                  }
+                  placeholder="https://your-domain.com/product-image.jpg"
+                  className="input-base"
+                />
+                <p
+                  className="text-[11px]"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Use this only for templates with IMAGE header. The URL must be
+                  publicly reachable over HTTPS.
+                </p>
+              </div>
+            </div>
+          )}
         </motion.div>
 
         <motion.div variants={item} className="glass-card p-4 sm:p-5">

@@ -23,9 +23,18 @@ Useful optional vars:
 WHATSAPP_CLOUD_API_VERSION=v19.0
 CRON_SECRET=...
 WHATSAPP_QUEUE_STATE_FILE=.data/whatsapp-queue-state.json
+WHATSAPP_DEADLINE_TEMPLATE_NAME=hello_world
+WHATSAPP_DEADLINE_TEMPLATE_LANGUAGE=en_US
+WHATSAPP_DEADLINE_TEMPLATE_BODY_PARAMS=
 ```
 
 Without `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID`, Eazee send/dispatch falls back to **mock mode**.
+
+Deadline workaround vars (optional but recommended while verification is pending):
+
+- `WHATSAPP_DEADLINE_TEMPLATE_NAME`: approved template used as automatic fallback when text sends are blocked by conversation-window rules.
+- `WHATSAPP_DEADLINE_TEMPLATE_LANGUAGE`: language code for fallback template (default `en_US`).
+- `WHATSAPP_DEADLINE_TEMPLATE_BODY_PARAMS`: optional default body params separated by `|` for placeholder templates, e.g. `Jossy|Ankara Bundle|12%|11:59 PM`.
 
 ## 2) Create Meta app and connect WhatsApp
 
@@ -194,6 +203,12 @@ You can still implement and demo the feature flow before business verification f
 - `GET /api/whatsapp/send` returns `configured: true`
 - `POST /api/whatsapp/send` returns `mode: "live"`
 - `POST /api/whatsapp/dispatch-due` with `Authorization: Bearer <CRON_SECRET>` dispatches due jobs.
+
+Workaround behavior in this repo:
+
+- `POST /api/whatsapp/send` with `type: "text"` first attempts text send.
+- If Meta rejects text because template is required (outside service window), Eazee automatically retries using `WHATSAPP_DEADLINE_TEMPLATE_NAME`.
+- You can also force template send by calling `POST /api/whatsapp/send` with `type: "template"` and `templateName`.
 
 What you cannot bypass:
 

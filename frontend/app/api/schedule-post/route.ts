@@ -10,6 +10,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       caption,
+      templateName,
+      templateLanguageCode,
+      templateBodyParameters,
+      templateHeaderImageUrl,
       postType,
       brief,
       tone,
@@ -42,6 +46,21 @@ export async function POST(request: Request) {
 
     const job = enqueueWhatsAppJob({
       caption,
+      templateName:
+        typeof templateName === "string" ? templateName.trim() : undefined,
+      templateLanguageCode:
+        typeof templateLanguageCode === "string"
+          ? templateLanguageCode.trim()
+          : undefined,
+      templateBodyParameters: Array.isArray(templateBodyParameters)
+        ? templateBodyParameters
+            .map((value: unknown) => String(value).trim())
+            .filter(Boolean)
+        : undefined,
+      templateHeaderImageUrl:
+        typeof templateHeaderImageUrl === "string"
+          ? templateHeaderImageUrl.trim()
+          : undefined,
       postType,
       brief,
       tone,

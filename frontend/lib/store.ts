@@ -14,6 +14,10 @@ export interface ScheduledPost {
   brief: string;
   tone: string;
   caption: string;
+  templateName?: string;
+  templateLanguageCode?: string;
+  templateBodyParameters?: string[];
+  templateHeaderImageUrl?: string;
   hasCeloPayment: boolean;
   price: string;
   currency: string;
@@ -101,59 +105,187 @@ interface EazeeStore {
   resetCompose: () => void;
 }
 
-const MOCK_TRANSACTIONS: CeloTransaction[] = [
-  {
-    id: "1",
-    txHash: "0xabc123def456789...",
-    buyer: "0x742d35Cc6634C0532925a3b8D4C9...",
-    productName: "Ankara Fabric Bundle",
-    amount: "12.00",
-    currency: "cUSD",
-    escrowStatus: "confirmed",
-    timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-  },
-  {
-    id: "2",
-    txHash: "0xdef789abc123456...",
-    buyer: "0x8F3d2a1B5c9E7f4...",
-    productName: "Shea Butter (500g)",
-    amount: "5.50",
-    currency: "cUSD",
-    escrowStatus: "pending",
-    timestamp: new Date(Date.now() - 1000 * 60 * 10).toISOString(),
-  },
-];
+type StoredPhoto = {
+  id: string;
+  preview: string;
+};
 
-const MOCK_ACCOUNTS: WAAccount[] = [
-  { id: "1", number: "+234 801 234 5678", label: "Main Business" },
-  { id: "2", number: "+234 902 345 6789", label: "Sales Line" },
-];
+type PhotosByAccount = Record<string, StoredPhoto[]>;
 
-const MOCK_POSTS: ScheduledPost[] = [
-  {
-    id: "1",
-    photos: [],
-    productName: "Ankara Fabric Bundle",
-    postType: "product",
-    brief: "New ankara fabrics collection",
-    tone: "friendly",
-    caption:
-      "🎉 New Collection Alert! Our gorgeous Ankara Fabric Bundle is here! Perfect for that occasion look. Premium quality, authentic African prints. 💛\n\n📦 Order now and get free delivery within Lagos!\n\n💳 Pay with cUSD: $12.00\nTap Buy Now 👇",
-    hasCeloPayment: true,
-    price: "12.00",
-    currency: "cUSD",
-    waAccount: "1",
-    sendTime: "17:00",
-    repeat: "weekly",
-    targets: ["status"],
-    groups: [],
-    status: "upcoming",
-    createdAt: new Date().toISOString(),
-  },
-];
+const STORAGE_WA_ACCOUNTS_KEY = "eazee-wa-accounts";
+const STORAGE_SELECTED_ACCOUNT_KEY = "eazee-selected-account";
+const STORAGE_PHOTOS_BY_ACCOUNT_KEY = "eazee-photos-by-account";
+const DEFAULT_ACCOUNT_STORAGE_KEY = "__default__";
+const LEGACY_SEEDED_ACCOUNT_KEYS = new Set([
+  "main business|+2348012345678",
+  "sales line|+2349023456789",
+]);
+
+function canUseBrowserStorage(): boolean {
+  return (
+    typeof window !== "undefined" && typeof window.localStorage !== "undefined"
+  );
+}
+
+function safeReadStorage(key: string): string | null {
+  if (!canUseBrowserStorage()) return null;
+
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteStorage(key: string, value: string): void {
+  if (!canUseBrowserStorage()) return;
+
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage errors (quota/private mode)
+  }
+}
+
+function parseJson<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizePhoneForKey(value: string): string {
+  return value.replace(/[^\d+]/g, "").trim();
+}
+
+function isLegacySeededAccount(account: WAAccount): boolean {
+  const label = account.label.trim().toLowerCase();
+  const number = normalizePhoneForKey(account.number);
+  return LEGACY_SEEDED_ACCOUNT_KEYS.has(`${label}|${number}`);
+}
+
+function getAccountStorageKey(accountId: string): string {
+  const trimmed = accountId.trim();
+  return trimmed || DEFAULT_ACCOUNT_STORAGE_KEY;
+}
+
+function buildPlaceholderFile(preview: string, index: number): File {
+  const mimeMatch = /^data:([^;]+);/i.exec(preview);
+  const mime = mimeMatch?.[1] || "image/jpeg";
+  const extension = mime.includes("png")
+    ? "png"
+    : mime.includes("webp")
+      ? "webp"
+      : "jpg";
+
+  if (typeof File !== "undefined") {
+    return new File([], `draft-${index + 1}.${extension}`, { type: mime });
+  }
+
+  return { name: `draft-${index + 1}.${extension}`, type: mime } as File;
+}
+
+function toStoredPhotos(photos: UploadedPhoto[]): StoredPhoto[] {
+  return photos
+    .map((photo) => ({
+      id: String(photo.id || ""),
+      preview: String(photo.preview || ""),
+    }))
+    .filter((photo) => Boolean(photo.id && photo.preview))
+    .slice(0, 6);
+}
+
+function toUploadedPhotos(photos: StoredPhoto[]): UploadedPhoto[] {
+  return photos
+    .filter((photo) => Boolean(photo.id && photo.preview))
+    .map((photo, index) => ({
+      id: photo.id,
+      preview: photo.preview,
+      file: buildPlaceholderFile(photo.preview, index),
+    }));
+}
+
+function loadWaAccounts(): WAAccount[] {
+  const parsed = parseJson<unknown[]>(
+    safeReadStorage(STORAGE_WA_ACCOUNTS_KEY),
+    [],
+  );
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((entry): entry is WAAccount => {
+      if (!entry || typeof entry !== "object") return false;
+      const account = entry as WAAccount;
+      return Boolean(account.id && account.label && account.number);
+    })
+    .map((account) => ({
+      id: String(account.id),
+      label: String(account.label),
+      number: String(account.number),
+    }))
+    .filter((account) => !isLegacySeededAccount(account));
+}
+
+function persistWaAccounts(accounts: WAAccount[]): void {
+  safeWriteStorage(STORAGE_WA_ACCOUNTS_KEY, JSON.stringify(accounts));
+}
+
+function loadSelectedAccount(): string {
+  return (safeReadStorage(STORAGE_SELECTED_ACCOUNT_KEY) || "").trim();
+}
+
+function persistSelectedAccount(accountId: string): void {
+  safeWriteStorage(STORAGE_SELECTED_ACCOUNT_KEY, accountId.trim());
+}
+
+function loadPhotosByAccount(): PhotosByAccount {
+  const parsed = parseJson<PhotosByAccount>(
+    safeReadStorage(STORAGE_PHOTOS_BY_ACCOUNT_KEY),
+    {},
+  );
+  if (!parsed || typeof parsed !== "object") return {};
+  return parsed;
+}
+
+function persistPhotosByAccount(map: PhotosByAccount): void {
+  safeWriteStorage(STORAGE_PHOTOS_BY_ACCOUNT_KEY, JSON.stringify(map));
+}
+
+function loadPhotosForAccount(accountId: string): UploadedPhoto[] {
+  const key = getAccountStorageKey(accountId);
+  const map = loadPhotosByAccount();
+  const stored = Array.isArray(map[key]) ? map[key] : [];
+  return toUploadedPhotos(stored);
+}
+
+function persistPhotosForAccount(
+  accountId: string,
+  photos: UploadedPhoto[],
+): void {
+  const key = getAccountStorageKey(accountId);
+  const map = loadPhotosByAccount();
+  map[key] = toStoredPhotos(photos);
+  persistPhotosByAccount(map);
+}
+
+function resolveInitialSelectedAccount(accounts: WAAccount[]): string {
+  const stored = loadSelectedAccount();
+  if (stored && accounts.some((account) => account.id === stored)) {
+    return stored;
+  }
+
+  return accounts[0]?.id || "";
+}
+
+const initialWaAccounts = loadWaAccounts();
+const initialSelectedAccount = resolveInitialSelectedAccount(initialWaAccounts);
+const initialPhotos = loadPhotosForAccount(initialSelectedAccount);
 
 export const useEazeeStore = create<EazeeStore>((set) => ({
-  photos: [],
+  photos: initialPhotos,
   productName: "",
   postType: "",
   brief: "",
@@ -164,21 +296,34 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   generatedCaption: "",
   captionDraft: "",
   isGenerating: false,
-  selectedAccount: "1",
+  selectedAccount: initialSelectedAccount,
   sendTime: "",
   customDateTime: "",
   repeat: "one-time",
   targets: [],
   selectedGroups: [],
-  posts: MOCK_POSTS,
+  posts: [],
   editingPostId: null,
-  transactions: MOCK_TRANSACTIONS,
-  waAccounts: MOCK_ACCOUNTS,
+  transactions: [],
+  waAccounts: initialWaAccounts,
 
-  setPhotos: (photos) => set({ photos }),
-  addPhoto: (photo) => set((s) => ({ photos: [...s.photos, photo] })),
+  setPhotos: (photos) =>
+    set((s) => {
+      persistPhotosForAccount(s.selectedAccount, photos);
+      return { photos };
+    }),
+  addPhoto: (photo) =>
+    set((s) => {
+      const photos = [...s.photos, photo];
+      persistPhotosForAccount(s.selectedAccount, photos);
+      return { photos };
+    }),
   removePhoto: (id) =>
-    set((s) => ({ photos: s.photos.filter((p) => p.id !== id) })),
+    set((s) => {
+      const photos = s.photos.filter((p) => p.id !== id);
+      persistPhotosForAccount(s.selectedAccount, photos);
+      return { photos };
+    }),
   setProductName: (productName) => set({ productName }),
   setPostType: (postType) => set({ postType }),
   setBrief: (brief) => set({ brief }),
@@ -189,7 +334,14 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   setGeneratedCaption: (generatedCaption) => set({ generatedCaption }),
   setCaptionDraft: (captionDraft) => set({ captionDraft }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
-  setSelectedAccount: (selectedAccount) => set({ selectedAccount }),
+  setSelectedAccount: (selectedAccount) =>
+    set(() => {
+      persistSelectedAccount(selectedAccount);
+      return {
+        selectedAccount,
+        photos: loadPhotosForAccount(selectedAccount),
+      };
+    }),
   setSendTime: (sendTime) => set({ sendTime }),
   setCustomDateTime: (customDateTime) => set({ customDateTime }),
   setRepeat: (repeat) => set({ repeat }),
@@ -197,10 +349,17 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   setSelectedGroups: (selectedGroups) => set({ selectedGroups }),
   addWAAccount: ({ label, number }) => {
     const id = `wa-${Date.now()}`;
-    set((s) => ({
-      waAccounts: [...s.waAccounts, { id, label, number }],
-      selectedAccount: id,
-    }));
+    set((s) => {
+      const waAccounts = [...s.waAccounts, { id, label, number }];
+      persistWaAccounts(waAccounts);
+      persistSelectedAccount(id);
+
+      return {
+        waAccounts,
+        selectedAccount: id,
+        photos: loadPhotosForAccount(id),
+      };
+    });
     return id;
   },
   addPost: (post) => set((s) => ({ posts: [post, ...s.posts] })),
@@ -238,6 +397,7 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
         price: post.price,
         currency: post.currency,
         selectedAccount: post.waAccount,
+        photos: loadPhotosForAccount(post.waAccount),
         sendTime: post.sendTime,
         customDateTime: "",
         repeat: post.repeat,
@@ -249,18 +409,22 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   addTransaction: (tx) =>
     set((s) => ({ transactions: [tx, ...s.transactions] })),
   resetCompose: () =>
-    set({
-      photos: [],
-      productName: "",
-      postType: "",
-      brief: "",
-      tone: "",
-      hasCeloPayment: false,
-      price: "",
-      currency: "cUSD",
-      generatedCaption: "",
-      captionDraft: "",
-      isGenerating: false,
-      editingPostId: null,
+    set((s) => {
+      persistPhotosForAccount(s.selectedAccount, []);
+
+      return {
+        photos: [],
+        productName: "",
+        postType: "",
+        brief: "",
+        tone: "",
+        hasCeloPayment: false,
+        price: "",
+        currency: "cUSD",
+        generatedCaption: "",
+        captionDraft: "",
+        isGenerating: false,
+        editingPostId: null,
+      };
     }),
 }));
