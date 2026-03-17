@@ -31,7 +31,20 @@ const RETRYABLE_CAPTION_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_GENERATION_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = 25000;
 
-type PremiumRouteState = "idle" | "checking" | "required" | "success" | "error";
+type PremiumRouteState =
+  | "idle"
+  | "checking"
+  | "required"
+  | "mock"
+  | "success"
+  | "error";
+
+type PremiumRouteApiPayload = {
+  mode?: string;
+  warning?: string;
+  message?: string;
+  error?: string;
+};
 
 export default function ComposePage() {
   const router = useRouter();
@@ -85,6 +98,7 @@ export default function ComposePage() {
           method: "GET",
           cache: "no-store",
         });
+        const payload = await extractPremiumRoutePayload(response.clone());
         const apiMessage = await extractErrorMessage(response.clone());
 
         if (cancelled) return;
@@ -96,6 +110,16 @@ export default function ComposePage() {
         }
 
         if (response.ok) {
+          if (payload.mode === "mock") {
+            setPremiumRouteState("mock");
+            setPremiumRouteMessage(
+              payload.warning ||
+                apiMessage ||
+                "x402 mock mode active. Payments are not enforced in this mode.",
+            );
+            return;
+          }
+
           setPremiumRouteState("success");
           setPremiumRouteMessage(apiMessage || "Payment route ready");
           return;
@@ -558,6 +582,21 @@ async function extractErrorMessage(response: Response): Promise<string> {
   return "";
 }
 
+async function extractPremiumRoutePayload(
+  response: Response,
+): Promise<PremiumRouteApiPayload> {
+  try {
+    const data = await response.json();
+    if (data && typeof data === "object") {
+      return data as PremiumRouteApiPayload;
+    }
+  } catch {
+    return {};
+  }
+
+  return {};
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -567,6 +606,7 @@ function PremiumStatusBadge({ state }: { state: PremiumRouteState }) {
     idle: { label: "Not checked", color: "var(--text-muted)" },
     checking: { label: "Checking", color: "var(--text-secondary)" },
     required: { label: "Payment required", color: "var(--brand-dark)" },
+    mock: { label: "Mock mode", color: "var(--text-muted)" },
     success: { label: "Payment success", color: "var(--brand-green)" },
     error: { label: "Payment error", color: "var(--brand-red)" },
   };

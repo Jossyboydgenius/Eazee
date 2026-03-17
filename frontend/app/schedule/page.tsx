@@ -89,6 +89,49 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } },
 };
 
+function normalizeRecipientPhone(value: string): string {
+  const normalized = value.trim().replace(/[^\d+]/g, "");
+  if (!normalized) return "";
+
+  if (normalized.startsWith("+")) {
+    return normalized;
+  }
+
+  if (normalized.startsWith("00")) {
+    return `+${normalized.slice(2)}`;
+  }
+
+  return `+${normalized}`;
+}
+
+function buildTargetRecipients(
+  targets: string[],
+  selectedGroups: string[],
+  accountNumber: string,
+): Record<string, string> {
+  const normalizedAccount = normalizeRecipientPhone(accountNumber);
+  if (!normalizedAccount) return {};
+
+  const recipients: Record<string, string> = {};
+
+  for (const target of targets) {
+    if (target === "groups") {
+      if (selectedGroups.length > 0) {
+        for (const groupId of selectedGroups) {
+          recipients[groupId] = normalizedAccount;
+        }
+      } else {
+        recipients.groups = normalizedAccount;
+      }
+      continue;
+    }
+
+    recipients[target] = normalizedAccount;
+  }
+
+  return recipients;
+}
+
 function StepHeader({
   label,
   icon: Icon,
@@ -234,8 +277,6 @@ export default function SchedulePage() {
     setIsScheduling(true);
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-
       const {
         photos,
         productName,
@@ -251,6 +292,60 @@ export default function SchedulePage() {
         ? posts.find((post) => post.id === editingPostId)
         : undefined;
 
+      const resolvedSendTime =
+        timeMode === "custom" ? customDateTime : sendTime;
+
+      const targetRecipients = buildTargetRecipients(
+        targets,
+        selectedGroups,
+        selectedAccountObj?.number || "",
+      );
+
+      const scheduleResponse = await fetch("/api/schedule-post", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          caption: captionSource,
+          postType,
+          brief,
+          tone,
+          photos: photos.map((photo) => photo.preview),
+          hasCeloPayment,
+          price,
+          currency,
+          waAccount: selectedAccount,
+          sendTime: resolvedSendTime,
+          repeat,
+          targets,
+          groups: selectedGroups,
+          targetRecipients,
+        }),
+      });
+
+      const scheduleResult = await scheduleResponse.json().catch(() => ({}));
+
+      if (!scheduleResponse.ok) {
+        const errorMessage =
+          typeof scheduleResult?.error === "string"
+            ? scheduleResult.error
+            : "Failed to schedule post";
+        throw new Error(errorMessage);
+      }
+
+      const scheduledFor =
+        typeof scheduleResult?.scheduledFor === "string"
+          ? Date.parse(scheduleResult.scheduledFor)
+          : Number.NaN;
+
+      if (
+        Number.isFinite(scheduledFor) &&
+        scheduledFor <= Date.now() + 15_000
+      ) {
+        void fetch("/api/whatsapp/dispatch-due", { method: "POST" });
+      }
+
       savePost({
         id: editingPostId ?? `post-${Date.now()}`,
         photos: photos.map((photo) => photo.preview),
@@ -263,7 +358,7 @@ export default function SchedulePage() {
         price,
         currency,
         waAccount: selectedAccount,
-        sendTime: timeMode === "custom" ? customDateTime : sendTime,
+        sendTime: resolvedSendTime,
         repeat: repeat as "one-time" | "daily" | "weekly" | "monthly",
         targets,
         groups: selectedGroups,
@@ -281,7 +376,10 @@ export default function SchedulePage() {
 
       toast({
         title: editingPostId ? "Post updated" : "Post scheduled",
-        description: "Your post is ready in the dashboard queue.",
+        description:
+          typeof scheduleResult?.queuedTargets === "number"
+            ? `Queued for ${scheduleResult.queuedTargets} delivery target(s).`
+            : "Your post is ready in the dashboard queue.",
         variant: "success",
       });
 

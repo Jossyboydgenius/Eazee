@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 export type WhatsAppTargetType =
   | "individual"
   | "status"
@@ -63,8 +66,63 @@ export interface WhatsAppWebhookEvent {
   payload: unknown;
 }
 
-const whatsappQueue: WhatsAppDispatchJob[] = [];
-const webhookEvents: WhatsAppWebhookEvent[] = [];
+interface PersistedQueueState {
+  jobs: WhatsAppDispatchJob[];
+  webhookEvents: WhatsAppWebhookEvent[];
+}
+
+const queueStateFilePath =
+  process.env.WHATSAPP_QUEUE_STATE_FILE?.trim() ||
+  join(process.cwd(), ".data", "whatsapp-queue-state.json");
+
+const persistedState = loadPersistedState();
+
+const whatsappQueue: WhatsAppDispatchJob[] = persistedState.jobs;
+const webhookEvents: WhatsAppWebhookEvent[] = persistedState.webhookEvents;
+
+function loadPersistedState(): PersistedQueueState {
+  if (!existsSync(queueStateFilePath)) {
+    return { jobs: [], webhookEvents: [] };
+  }
+
+  try {
+    const raw = readFileSync(queueStateFilePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<PersistedQueueState>;
+
+    const jobs = Array.isArray(parsed.jobs) ? parsed.jobs : [];
+    const events = Array.isArray(parsed.webhookEvents)
+      ? parsed.webhookEvents
+      : [];
+
+    return {
+      jobs,
+      webhookEvents: events,
+    };
+  } catch (error) {
+    console.error("Failed to load persisted WhatsApp queue state:", error);
+    return { jobs: [], webhookEvents: [] };
+  }
+}
+
+function persistState() {
+  try {
+    mkdirSync(dirname(queueStateFilePath), { recursive: true });
+    writeFileSync(
+      queueStateFilePath,
+      JSON.stringify(
+        {
+          jobs: whatsappQueue,
+          webhookEvents,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  } catch (error) {
+    console.error("Failed to persist WhatsApp queue state:", error);
+  }
+}
 
 export function enqueueWhatsAppJob(
   input: NewWhatsAppDispatchJob,
@@ -80,6 +138,7 @@ export function enqueueWhatsAppJob(
   };
 
   whatsappQueue.push(job);
+  persistState();
   return job;
 }
 
@@ -107,6 +166,7 @@ export function markJobProcessing(
   job.status = "processing";
   job.attemptCount += 1;
   job.updatedAt = new Date().toISOString();
+  persistState();
   return job;
 }
 
@@ -121,6 +181,7 @@ export function markJobSent(
   job.lastError = undefined;
   job.messageIds = messageIds;
   job.updatedAt = new Date().toISOString();
+  persistState();
   return job;
 }
 
@@ -134,6 +195,7 @@ export function markJobFailed(
   job.status = "failed";
   job.lastError = errorMessage;
   job.updatedAt = new Date().toISOString();
+  persistState();
   return job;
 }
 
@@ -145,6 +207,7 @@ export function recordWebhookEvent(payload: unknown): WhatsAppWebhookEvent {
   };
 
   webhookEvents.push(event);
+  persistState();
   return event;
 }
 

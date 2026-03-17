@@ -19,13 +19,13 @@ export function WalletConnectButton({
   label,
 }: WalletConnectButtonProps) {
   const fallbackAvatar =
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='48' fill='%2322c55e'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-family='Poppins,Arial,sans-serif' font-size='34' font-weight='700' fill='white'%3EW%3C/text%3E%3C/svg%3E";
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23d8b4fe'/%3E%3Cstop offset='100%25' stop-color='%237e22ce'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='96' height='96' rx='48' fill='url(%23g)'/%3E%3C/svg%3E";
 
-  const compactButtonClass =
-    "!w-full !max-w-full !min-w-0 !h-9 !min-h-[36px] !rounded-xl !font-semibold !text-[11px] !px-2 !overflow-hidden";
+  const compactConnectButtonClass =
+    "eazee-wallet-connect-compact !w-10 !h-10 !min-h-[40px] !max-w-[40px] !min-w-[40px] !rounded-full !p-0 !text-[10px] !overflow-hidden !justify-center";
 
-  const regularButtonClass =
-    "!w-full !max-w-full !min-w-0 !h-10 !min-h-[40px] !rounded-xl !font-semibold !text-sm !px-3";
+  const compactDetailsButtonClass =
+    "eazee-wallet-details-compact !w-10 !h-10 !min-h-[40px] !max-w-[40px] !min-w-[40px] !rounded-full !p-0 !overflow-hidden !justify-center";
 
   const wallets = [
     inAppWallet({ auth: { options: ["google", "apple", "email"] } }),
@@ -45,7 +45,7 @@ export function WalletConnectButton({
         disabled
         className={
           compact
-            ? "w-full min-h-[38px] rounded-xl font-semibold text-xs opacity-70 cursor-not-allowed border"
+            ? "w-10 h-10 min-h-[40px] rounded-full font-semibold text-xs opacity-70 cursor-not-allowed border"
             : "w-full min-h-[40px] rounded-xl font-semibold text-sm opacity-70 cursor-not-allowed border"
         }
         style={{
@@ -71,15 +71,15 @@ export function WalletConnectButton({
         description: "AI WhatsApp marketing with Celo payments",
       }}
       connectButton={{
-        label: label || (compact ? "Wallet" : "Connect Wallet"),
-        className: compact ? compactButtonClass : regularButtonClass,
+        label: label || (compact ? "Connect" : "Connect Wallet"),
+        className: compact ? compactConnectButtonClass : undefined,
       }}
       detailsButton={{
-        className: compact ? compactButtonClass : regularButtonClass,
+        className: compact ? compactDetailsButtonClass : undefined,
+        connectedAccountAvatarUrl: fallbackAvatar,
       }}
       detailsModal={{
         showTestnetFaucet: true,
-        connectedAccountName: "My Wallet",
         connectedAccountAvatarUrl: fallbackAvatar,
         manageWallet: {
           allowLinkingProfiles: false,

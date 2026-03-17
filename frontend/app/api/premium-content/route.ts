@@ -47,24 +47,24 @@ function readPaymentHeader(request: Request) {
 }
 
 export async function GET(request: Request) {
-  if (!thirdwebX402Facilitator) {
-    if (x402Mode === "mock") {
-      return NextResponse.json(
-        {
-          data: "premium content",
-          mode: "mock",
-          warning:
-            "x402 mock mode active. Set THIRDWEB_SECRET_KEY for live payment settlement.",
+  if (x402Mode === "mock") {
+    return NextResponse.json(
+      {
+        data: "premium content",
+        mode: "mock",
+        warning:
+          "x402 mock mode active. Set THIRDWEB_X402_MODE=live to enforce paid access.",
+      },
+      {
+        status: 200,
+        headers: {
+          "x-eazee-x402": "mock",
         },
-        {
-          status: 200,
-          headers: {
-            "x-eazee-x402": "mock",
-          },
-        },
-      );
-    }
+      },
+    );
+  }
 
+  if (!thirdwebX402Facilitator) {
     return NextResponse.json(
       {
         error:
@@ -99,23 +99,6 @@ export async function GET(request: Request) {
       headers: result.responseHeaders,
     });
   } catch (error) {
-    if (x402Mode === "mock") {
-      return NextResponse.json(
-        {
-          data: "premium content",
-          mode: "mock",
-          warning:
-            "x402 settlement failed in live path; mock mode response returned.",
-        },
-        {
-          status: 200,
-          headers: {
-            "x-eazee-x402": "mock",
-          },
-        },
-      );
-    }
-
     console.error("x402 settlement error:", error);
     return NextResponse.json(
       { error: "Failed to settle x402 payment" },

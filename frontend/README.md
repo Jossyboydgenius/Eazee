@@ -37,6 +37,8 @@ NEXT_PUBLIC_CELO_CHAIN_ID=11142220
 WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
 WHATSAPP_WEBHOOK_VERIFY_TOKEN=your_webhook_verify_token
+CRON_SECRET=your_cron_secret
+WHATSAPP_QUEUE_STATE_FILE=.data/whatsapp-queue-state.json
 ```
 
 ## Thirdweb API Keys (Fix KEY_NOT_FOUND)
@@ -70,10 +72,26 @@ Scaffolded API routes:
 - `GET|POST /api/whatsapp/webhook`
 - `POST /api/whatsapp/dispatch-due`
 
+Queue/webhook persistence notes:
+
+- Queue jobs + webhook ingests are persisted to `.data/whatsapp-queue-state.json` by default.
+- Override storage location with `WHATSAPP_QUEUE_STATE_FILE`.
+
+Cron notes:
+
+- `vercel.json` includes a cron for `/api/whatsapp/dispatch-due` every 2 minutes.
+- If `CRON_SECRET` is set, `POST /api/whatsapp/dispatch-due` requires `Authorization: Bearer <CRON_SECRET>`.
+
 Cloud API notes:
 
 - Send endpoint supports `recipient_type: individual` payload dispatch.
 - Delivery targets like groups/broadcast/channel should be mapped to recipient numbers and fanned out by worker.
+
+## Setup Guides
+
+- Cron trigger setup: `CRON_TRIGGER_README.md`
+- WhatsApp keys setup: `WHATSAPP_KEYS_GUIDE.md`
+- Privacy policy page (app review): `/privacy`
 
 ## Local Development
 

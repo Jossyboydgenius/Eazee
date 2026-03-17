@@ -341,7 +341,12 @@ function SidebarContent({
           )}
         </button>
 
-        <div className={cn("mt-3", collapsed && "overflow-hidden")}>
+        <div
+          className={cn(
+            "mt-3",
+            collapsed && "flex items-center justify-center",
+          )}
+        >
           <WalletConnectButton compact={collapsed} />
         </div>
       </div>

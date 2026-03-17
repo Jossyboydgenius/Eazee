@@ -10,7 +10,31 @@ import {
 
 export const runtime = "nodejs";
 
-export async function POST() {
+function isAuthorizedDispatchRequest(request: Request): boolean {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) return true;
+
+  const authHeader = request.headers.get("authorization") || "";
+  const bearerToken = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
+
+  return bearerToken === cronSecret;
+}
+
+function getTriggerSource(request: Request): string {
+  if (request.headers.get("x-vercel-cron")) {
+    return "vercel-cron";
+  }
+
+  return "manual";
+}
+
+async function dispatchDueJobs(request: Request) {
+  if (!isAuthorizedDispatchRequest(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const dueJobs = getDueWhatsAppJobs();
 
   if (dueJobs.length === 0) {
@@ -86,12 +110,21 @@ export async function POST() {
 
   return NextResponse.json({
     success: true,
+    trigger: getTriggerSource(request),
     dispatched: dueJobs.length,
     results,
   });
 }
 
-export async function GET() {
+export async function POST(request: Request) {
+  return dispatchDueJobs(request);
+}
+
+export async function GET(request: Request) {
+  if (request.headers.get("x-vercel-cron")) {
+    return dispatchDueJobs(request);
+  }
+
   const queue = listWhatsAppJobs();
   const due = getDueWhatsAppJobs();
 

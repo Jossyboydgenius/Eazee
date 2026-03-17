@@ -47,10 +47,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>
+      <body className="h-dvh overflow-hidden">
         <Providers>
           <WalletGate>
-            <div className="flex h-screen overflow-hidden">
+            <div className="flex h-full overflow-hidden">
               {/* Sidebar — hidden on mobile (drawer handles mobile) */}
               <Sidebar />
               {/* Main content — has top padding on mobile to account for fixed topbar */}

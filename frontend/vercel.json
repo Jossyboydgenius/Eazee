@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/whatsapp/dispatch-due",
+      "schedule": "*/2 * * * *"
+    }
+  ]
+}

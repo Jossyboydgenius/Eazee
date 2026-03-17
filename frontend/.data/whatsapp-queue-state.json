@@ -1,0 +1,33 @@
+{
+  "jobs": [
+    {
+      "id": "wa-job-1773739574673-wz4ip",
+      "caption": "🎯 Special offer just for you!\n\nA gaming pc going for cheap!\nDm to get yours now. \n\n📦 Quality guaranteed\n🚚 Fast delivery across Nigeria\n📱 DM to order now!\n\n💳 Pay with cUSD: $600\nTap Buy Now 👇\n\n#Eazee #Product #MadeInNigeria",
+      "postType": "product",
+      "brief": "A gaming pc going for cheap!\nDm to get yours now. ",
+      "tone": "promotional",
+      "photos": [
+        "blob:http://192.168.100.51:3000/5047770e-ea00-45a3-af47-dc2def21fdef"
+      ],
+      "hasCeloPayment": true,
+      "price": "600",
+      "currency": "cUSD",
+      "waAccount": "1",
+      "sendTime": "7:00",
+      "repeat": "daily",
+      "targets": [
+        {
+          "type": "status",
+          "id": "status",
+          "recipient": "+2348012345678"
+        }
+      ],
+      "scheduledFor": "2026-03-18T07:00:00.000Z",
+      "status": "queued",
+      "createdAt": "2026-03-17T09:26:14.673Z",
+      "updatedAt": "2026-03-17T09:26:14.673Z",
+      "attemptCount": 0
+    }
+  ],
+  "webhookEvents": []
+}
