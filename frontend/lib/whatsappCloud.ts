@@ -124,7 +124,10 @@ export async function sendWhatsAppTextMessage(
       ok: false,
       status: response.status,
       mode: "live",
-      error: getGraphErrorMessage(data) || "WhatsApp Cloud API send failed",
+      error:
+        mapKnownGraphErrorMessage(data) ||
+        getGraphErrorMessage(data) ||
+        "WhatsApp Cloud API send failed",
       data,
     };
   }
@@ -246,7 +249,9 @@ export async function sendWhatsAppTemplateMessage(
       status: response.status,
       mode: "live",
       error:
-        getGraphErrorMessage(data) || "WhatsApp Cloud API template send failed",
+        mapKnownGraphErrorMessage(data) ||
+        getGraphErrorMessage(data) ||
+        "WhatsApp Cloud API template send failed",
       data,
     };
   }
@@ -350,6 +355,39 @@ function getGraphErrorCode(data: unknown): number | undefined {
 
   const code = error.code;
   return typeof code === "number" ? code : undefined;
+}
+
+function getGraphErrorSubcode(data: unknown): number | undefined {
+  if (!data || typeof data !== "object") return undefined;
+
+  const error = (data as { error?: { error_subcode?: unknown } }).error;
+  if (!error || typeof error !== "object") return undefined;
+
+  const subcode = error.error_subcode;
+  return typeof subcode === "number" ? subcode : undefined;
+}
+
+function mapKnownGraphErrorMessage(data: unknown): string {
+  const code = getGraphErrorCode(data);
+  const subcode = getGraphErrorSubcode(data);
+
+  if (code === 190 && subcode === 467) {
+    return "WhatsApp access token session is invalid (190/467). Generate a new permanent System User token in Meta Business Manager and update WHATSAPP_ACCESS_TOKEN.";
+  }
+
+  if (code === 190) {
+    return "WhatsApp access token is invalid or expired (code 190). Update WHATSAPP_ACCESS_TOKEN with a valid long-lived token.";
+  }
+
+  if (code === 10 || code === 200) {
+    return "WhatsApp API permission error. Confirm your app is connected to the phone number and has whatsapp_business_messaging permission.";
+  }
+
+  if (code === 131030) {
+    return "Recipient phone number is not in your WhatsApp API test allowlist (131030). Add and verify that recipient in Meta App Dashboard → WhatsApp → API Setup, or complete app/business go-live to message non-allowlisted users.";
+  }
+
+  return "";
 }
 
 function isLikelyTemplateRequiredError(

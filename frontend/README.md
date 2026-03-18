@@ -40,6 +40,10 @@ WHATSAPP_WEBHOOK_VERIFY_TOKEN=your_webhook_verify_token
 WHATSAPP_DEADLINE_TEMPLATE_NAME=hello_world
 WHATSAPP_DEADLINE_TEMPLATE_LANGUAGE=en_US
 WHATSAPP_DEADLINE_TEMPLATE_BODY_PARAMS=
+WHATSAPP_GROUPS_SOURCE_URL=https://your-backend.example.com/api/whatsapp/groups
+WHATSAPP_GROUPS_SOURCE_TOKEN=your_optional_backend_bearer_token
+WHATSAPP_GROUPS_ALLOW_MOCK=true
+WHATSAPP_TEMPLATE_TEST_MODE=mock
 CRON_SECRET=your_cron_secret
 WHATSAPP_QUEUE_STATE_FILE=.data/whatsapp-queue-state.json
 ```
@@ -74,6 +78,7 @@ Scaffolded API routes:
 - `POST /api/whatsapp/send`
 - `GET|POST /api/whatsapp/webhook`
 - `POST /api/whatsapp/dispatch-due`
+- `GET /api/whatsapp/import-groups`
 
 Queue/webhook persistence notes:
 
@@ -89,6 +94,77 @@ Cloud API notes:
 
 - Send endpoint supports `recipient_type: individual` payload dispatch.
 - Delivery targets like groups/broadcast/channel should be mapped to recipient numbers and fanned out by worker.
+- WhatsApp Cloud API does not directly post into group chats from this endpoint; Schedule includes an "Open WhatsApp forward" action so users can forward the prepared caption to selected groups in WhatsApp.
+
+### Groups Import Adapter (upstream backend contract)
+
+`GET /api/whatsapp/import-groups` expects your upstream endpoint (`WHATSAPP_GROUPS_SOURCE_URL`) to return either:
+
+- a raw array of groups, or
+- an object with one of these array keys: `groups`, `data`, or `items`.
+
+Each group item should include at least:
+
+- `id` (or `groupId`/`slug`/`key`)
+- `name` (or `title`/`label`)
+
+Optional fields:
+
+- `members` (or `memberCount`/`participants`)
+- `recipient` (or `recipientPhone`/`phone`) for Cloud API fan-out mapping
+
+Example response:
+
+```json
+{
+  "groups": [
+    {
+      "id": "vip-customers",
+      "name": "VIP Customers",
+      "members": 42,
+      "recipient": "+2348012345678"
+    },
+    {
+      "id": "community-updates",
+      "name": "Community Updates",
+      "members": 64
+    }
+  ]
+}
+```
+
+Minimal Express adapter example:
+
+```ts
+import express from "express";
+
+const app = express();
+
+app.get("/api/whatsapp/groups", (req, res) => {
+  const waAccount = String(req.query.waAccount || "");
+
+  res.json({
+    groups: [
+      {
+        id: `${waAccount || "default"}-vip`,
+        name: "VIP Customers",
+        members: 42,
+        recipient: "+2348012345678",
+      },
+      {
+        id: `${waAccount || "default"}-community`,
+        name: "Community Updates",
+        members: 64,
+      },
+    ],
+  });
+});
+```
+
+MVP behavior:
+
+- If `WHATSAPP_GROUPS_SOURCE_URL` is missing in non-production (or `WHATSAPP_GROUPS_ALLOW_MOCK=true`), import route returns mock groups so UI stays usable.
+- If template test fails due account/token readiness and `WHATSAPP_TEMPLATE_TEST_MODE=mock`, `/api/whatsapp/send` returns a mock success payload for demo continuity.
 
 ## Setup Guides
 

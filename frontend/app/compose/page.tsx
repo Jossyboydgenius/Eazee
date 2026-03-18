@@ -8,7 +8,7 @@ import { PostTypeSelector, ToneSelector } from "@/components/compose/Selectors";
 import { CeloPaymentToggle } from "@/components/compose/CeloPaymentToggle";
 import { WhatsAppPreview } from "@/components/compose/WhatsAppPreview";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 import Image, { type StaticImageData } from "next/image";
 import addAPhotoIcon from "@/svg/add-a-photo.svg";
@@ -30,6 +30,7 @@ const item = {
 const RETRYABLE_CAPTION_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_GENERATION_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = 25000;
+const AI_TYPING_INTERVAL_MS = 18;
 
 type PremiumRouteState =
   | "idle"
@@ -52,6 +53,7 @@ export default function ComposePage() {
   const [premiumRouteState, setPremiumRouteState] =
     useState<PremiumRouteState>("idle");
   const [premiumRouteMessage, setPremiumRouteMessage] = useState("");
+  const captionTypingIntervalRef = useRef<number | null>(null);
 
   const {
     brief,
@@ -141,6 +143,47 @@ export default function ComposePage() {
     };
   }, [hasCeloPayment]);
 
+  useEffect(() => {
+    return () => {
+      if (captionTypingIntervalRef.current !== null) {
+        window.clearInterval(captionTypingIntervalRef.current);
+        captionTypingIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  const animateCaptionTyping = (caption: string) => {
+    return new Promise<void>((resolve) => {
+      if (!caption) {
+        setCaptionDraft("");
+        resolve();
+        return;
+      }
+
+      if (captionTypingIntervalRef.current !== null) {
+        window.clearInterval(captionTypingIntervalRef.current);
+      }
+
+      const step = caption.length > 360 ? 6 : caption.length > 240 ? 4 : 2;
+      let cursor = 0;
+      setCaptionDraft("");
+
+      captionTypingIntervalRef.current = window.setInterval(() => {
+        cursor = Math.min(caption.length, cursor + step);
+        setCaptionDraft(caption.slice(0, cursor));
+
+        if (
+          cursor >= caption.length &&
+          captionTypingIntervalRef.current !== null
+        ) {
+          window.clearInterval(captionTypingIntervalRef.current);
+          captionTypingIntervalRef.current = null;
+          resolve();
+        }
+      }, AI_TYPING_INTERVAL_MS);
+    });
+  };
+
   async function handleGenerate() {
     if (!canGenerate || isGenerating) return;
 
@@ -162,8 +205,8 @@ export default function ComposePage() {
         currency,
         previousCaption,
       });
+      await animateCaptionTyping(caption);
       setGeneratedCaption(caption);
-      setCaptionDraft(caption);
       console.log("[compose] Generated caption (full):", caption);
     } catch (err) {
       console.error(err);

@@ -27,6 +27,74 @@
       "createdAt": "2026-03-17T09:26:14.673Z",
       "updatedAt": "2026-03-17T09:26:14.673Z",
       "attemptCount": 0
+    },
+    {
+      "id": "wa-job-1773758760753-htb7v",
+      "caption": "🎯 Special offer just for you!\n\nBrand new g-wagon 2025 going for cheap rate, grab it now.\n\n📦 Quality guaranteed\n🚚 Fast delivery across Nigeria\n📱 DM to order now!\n\n#Eazee #Sale #MadeInNigeria",
+      "templateName": "hello_world",
+      "templateLanguageCode": "en_US",
+      "templateBodyParameters": [],
+      "postType": "sale",
+      "brief": "Brand new g-wagon 2025 going for cheap rate, grab it now.",
+      "tone": "promotional",
+      "photos": [],
+      "hasCeloPayment": true,
+      "price": "",
+      "currency": "cUSD",
+      "waAccount": "wa-1773758737964",
+      "sendTime": "9:00",
+      "repeat": "one-time",
+      "targets": [
+        {
+          "type": "status",
+          "id": "status",
+          "recipient": "+2349034018852"
+        },
+        {
+          "type": "broadcast",
+          "id": "broadcast",
+          "recipient": "+2349034018852"
+        }
+      ],
+      "scheduledFor": "2026-03-18T09:00:00.000Z",
+      "status": "queued",
+      "createdAt": "2026-03-17T14:46:00.753Z",
+      "updatedAt": "2026-03-17T14:46:00.753Z",
+      "attemptCount": 0
+    },
+    {
+      "id": "wa-job-1773759753027-l2m3h",
+      "caption": "🎯 Special offer just for you!\n\nBrand new g-wagon 2025 going for cheap rate, grab it now.\n\n📦 Quality guaranteed\n🚚 Fast delivery across Nigeria\n📱 DM to order now!\n\n#Eazee #Sale #MadeInNigeria",
+      "templateName": "hello_world",
+      "templateLanguageCode": "en_US",
+      "templateBodyParameters": [],
+      "postType": "sale",
+      "brief": "Brand new g-wagon 2025 going for cheap rate, grab it now.",
+      "tone": "promotional",
+      "photos": [],
+      "hasCeloPayment": true,
+      "price": "",
+      "currency": "cUSD",
+      "waAccount": "wa-1773758737964",
+      "sendTime": "9:00",
+      "repeat": "one-time",
+      "targets": [
+        {
+          "type": "status",
+          "id": "status",
+          "recipient": "+2349034018852"
+        },
+        {
+          "type": "broadcast",
+          "id": "broadcast",
+          "recipient": "+2349034018852"
+        }
+      ],
+      "scheduledFor": "2026-03-18T09:00:00.000Z",
+      "status": "queued",
+      "createdAt": "2026-03-17T15:02:33.027Z",
+      "updatedAt": "2026-03-17T15:02:33.027Z",
+      "attemptCount": 0
     }
   ],
   "webhookEvents": []

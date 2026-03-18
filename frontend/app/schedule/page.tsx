@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useEazeeStore } from "@/lib/store";
+import { useEazeeStore, type ScheduledPost } from "@/lib/store";
 import { useRouter } from "next/navigation";
 import Image, { type StaticImageData } from "next/image";
 import confetti from "canvas-confetti";
@@ -14,9 +14,11 @@ import {
   Phone,
   ChevronDown,
   Sparkles,
-  FileText,
+  NotebookPen,
   Plus,
   Repeat,
+  Send,
+  ArrowUpRight,
   type LucideIcon,
 } from "lucide-react";
 import { parsePhoneNumberFromString } from "libphonenumber-js/min";
@@ -62,13 +64,6 @@ const TARGET_OPTIONS: TargetOption[] = [
   },
 ];
 
-const MOCK_GROUPS = [
-  { id: "g1", name: "Lagos Buyers Group", members: 256 },
-  { id: "g2", name: "Abuja Fashion Connect", members: 143 },
-  { id: "g3", name: "Nigeria Traders Hub", members: 512 },
-  { id: "g4", name: "Online Shoppers NG", members: 89 },
-];
-
 const TIME_CHIPS = [
   "7:00",
   "9:00",
@@ -79,13 +74,18 @@ const TIME_CHIPS = [
   "20:00",
   "21:00",
 ];
-const AI_TAG_TIMES = ["7:00", "15:00"];
+const TIME_CHIP_HOURS = TIME_CHIPS.map((time) => {
+  const [hourRaw] = time.split(":");
+  return Number.parseInt(hourRaw, 10);
+});
+const STATUS_PEAK_WINDOWS = new Set(["9:00", "17:00", "19:00"]);
 const TEMPLATE_LANGUAGE_OPTIONS = [
   { value: "en_US", label: "English (US) — en_US" },
   { value: "en_GB", label: "English (UK) — en_GB" },
   { value: "en", label: "English (generic) — en" },
 ];
 const TEMPLATE_FALLBACK_STORAGE_KEY = "eazee-template-fallback-by-account";
+const GROUP_DIRECTORY_STORAGE_KEY = "eazee-groups-by-account";
 const DEFAULT_TEMPLATE_FALLBACK_ACCOUNT_KEY = "__default__";
 
 interface TemplateFallbackDraft {
@@ -97,6 +97,15 @@ interface TemplateFallbackDraft {
 }
 
 type TemplateFallbackDraftByAccount = Record<string, TemplateFallbackDraft>;
+
+interface GroupOption {
+  id: string;
+  name: string;
+  members?: number;
+  recipient?: string;
+}
+
+type GroupDirectoryByAccount = Record<string, GroupOption[]>;
 
 const DEFAULT_TEMPLATE_FALLBACK_DRAFT: TemplateFallbackDraft = {
   useTemplateFallback: true,
@@ -152,6 +161,41 @@ function writeTemplateFallbackDraftByAccount(
   }
 }
 
+function readGroupDirectoryByAccount(): GroupDirectoryByAccount {
+  if (!canUseBrowserStorage()) {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(GROUP_DIRECTORY_STORAGE_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw) as GroupDirectoryByAccount;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeGroupDirectoryByAccount(
+  groupsByAccount: GroupDirectoryByAccount,
+): void {
+  if (!canUseBrowserStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      GROUP_DIRECTORY_STORAGE_KEY,
+      JSON.stringify(groupsByAccount),
+    );
+  } catch {
+    // Ignore localStorage write failures.
+  }
+}
+
 const container = {
   hidden: { opacity: 0 },
   show: { opacity: 1, transition: { staggerChildren: 0.08 } },
@@ -180,6 +224,7 @@ function buildTargetRecipients(
   targets: string[],
   selectedGroups: string[],
   accountNumber: string,
+  groupRecipientsById: Record<string, string>,
 ): Record<string, string> {
   const normalizedAccount = normalizeRecipientPhone(accountNumber);
   if (!normalizedAccount) return {};
@@ -190,7 +235,13 @@ function buildTargetRecipients(
     if (target === "groups") {
       if (selectedGroups.length > 0) {
         for (const groupId of selectedGroups) {
-          recipients[groupId] = normalizedAccount;
+          const groupRecipient = normalizeRecipientPhone(
+            groupRecipientsById[groupId] || normalizedAccount,
+          );
+
+          if (groupRecipient) {
+            recipients[groupId] = groupRecipient;
+          }
         }
       } else {
         recipients.groups = normalizedAccount;
@@ -202,6 +253,214 @@ function buildTargetRecipients(
   }
 
   return recipients;
+}
+
+function toTimeChip(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (TIME_CHIPS.includes(trimmed)) {
+    return trimmed;
+  }
+
+  const simpleMatch = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (simpleMatch) {
+    const hour = Number.parseInt(simpleMatch[1] || "", 10);
+    if (!Number.isFinite(hour)) {
+      return null;
+    }
+
+    const nearestIndex = TIME_CHIP_HOURS.reduce(
+      (bestIndex, candidateHour, index) => {
+        const bestDistance = Math.abs(TIME_CHIP_HOURS[bestIndex] - hour);
+        const candidateDistance = Math.abs(candidateHour - hour);
+
+        return candidateDistance < bestDistance ? index : bestIndex;
+      },
+      0,
+    );
+
+    return TIME_CHIPS[nearestIndex] || null;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const hour = parsed.getHours();
+  const nearestIndex = TIME_CHIP_HOURS.reduce(
+    (bestIndex, candidateHour, index) => {
+      const bestDistance = Math.abs(TIME_CHIP_HOURS[bestIndex] - hour);
+      const candidateDistance = Math.abs(candidateHour - hour);
+
+      return candidateDistance < bestDistance ? index : bestIndex;
+    },
+    0,
+  );
+
+  return TIME_CHIPS[nearestIndex] || null;
+}
+
+function getRelevantPostsForAi(
+  posts: ScheduledPost[],
+  selectedAccountId: string,
+  targets: string[],
+): ScheduledPost[] {
+  const activeTargets = new Set(targets);
+
+  return posts.filter((post) => {
+    if (selectedAccountId && post.waAccount !== selectedAccountId) {
+      return false;
+    }
+
+    if (activeTargets.size === 0) {
+      return true;
+    }
+
+    if (!Array.isArray(post.targets) || post.targets.length === 0) {
+      return false;
+    }
+
+    return post.targets.some((target) => activeTargets.has(target));
+  });
+}
+
+function getAiRecommendedTimes(
+  targets: string[],
+  repeatValue: string,
+  posts: ScheduledPost[],
+  selectedAccountId: string,
+): string[] {
+  const isStatusTargeted = targets.includes("status");
+  const isRecurring = repeatValue !== "one-time";
+  const now = new Date();
+  const isWeekend = [0, 6].includes(now.getDay());
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  const shouldPenalizePastToday = currentHour < 21.5;
+
+  const relevantPosts = getRelevantPostsForAi(posts, selectedAccountId, targets);
+  const usageByTime = relevantPosts.reduce<
+    Record<string, { scheduled: number; sent: number; failed: number }>
+  >((accumulator, post) => {
+    const normalizedTime = toTimeChip(post.sendTime);
+    if (!normalizedTime) {
+      return accumulator;
+    }
+
+    const existing = accumulator[normalizedTime] || {
+      scheduled: 0,
+      sent: 0,
+      failed: 0,
+    };
+
+    existing.scheduled += 1;
+    if (post.status === "sent") {
+      existing.sent += 1;
+    }
+    if (post.status === "failed") {
+      existing.failed += 1;
+    }
+
+    accumulator[normalizedTime] = existing;
+    return accumulator;
+  }, {});
+
+  const scored = TIME_CHIPS.map((time) => {
+    const [hourValueRaw] = time.split(":");
+    const hourValue = Number.parseInt(hourValueRaw, 10);
+    const usage = usageByTime[time] || { scheduled: 0, sent: 0, failed: 0 };
+    let score = 34;
+
+    if (STATUS_PEAK_WINDOWS.has(time)) {
+      score += 22;
+    } else if (hourValue >= 8 && hourValue <= 10) {
+      score += 14;
+    } else if (hourValue >= 16 && hourValue <= 20) {
+      score += 17;
+    } else {
+      score += 6;
+    }
+
+    if (isStatusTargeted) {
+      if (time === "19:00") score += 9;
+      if (time === "17:00") score += 7;
+      if (time === "9:00") score += 6;
+    }
+
+    if (isRecurring && (time === "9:00" || time === "19:00")) {
+      score += 4;
+    }
+
+    if (isWeekend) {
+      if (hourValue >= 18 && hourValue <= 21) {
+        score += 7;
+      }
+
+      if (hourValue < 10) {
+        score -= 4;
+      }
+    }
+
+    if (shouldPenalizePastToday && repeatValue === "one-time") {
+      if (hourValue + 0.25 < currentHour) {
+        score -= 42;
+      } else if (hourValue <= currentHour + 2.5) {
+        score += 8;
+      }
+    }
+
+    score -= usage.scheduled * 4;
+    score += usage.sent * 5;
+    score -= usage.failed * 8;
+
+    if (relevantPosts.length === 0) {
+      if (currentHour >= 14 && hourValue >= 17 && hourValue <= 21) {
+        score += 5;
+      }
+
+      if (currentHour < 10 && hourValue >= 8 && hourValue <= 12) {
+        score += 4;
+      }
+    }
+
+    return {
+      time,
+      score,
+      scheduledCount: usage.scheduled,
+    };
+  });
+
+  return scored
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      if (left.scheduledCount !== right.scheduledCount) {
+        return left.scheduledCount - right.scheduledCount;
+      }
+
+      return left.time.localeCompare(right.time);
+    })
+    .slice(0, 3)
+    .map((entry) => entry.time);
+}
+
+function formatTimeLabel(time: string): string {
+  const [hourRaw, minuteRaw] = time.split(":");
+  const hour = Number.parseInt(hourRaw, 10);
+  const minute = Number.parseInt(minuteRaw || "0", 10);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return time;
+  }
+
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const normalizedHour = hour % 12 === 0 ? 12 : hour % 12;
+  const normalizedMinute = minute.toString().padStart(2, "0");
+
+  return `${normalizedHour}:${normalizedMinute} ${suffix}`;
 }
 
 function StepHeader({
@@ -249,6 +508,7 @@ export default function SchedulePage() {
     generatedCaption,
     captionDraft,
     savePost,
+    posts,
     editingPostId,
     photos,
     brief,
@@ -278,6 +538,10 @@ export default function SchedulePage() {
   const [templateHeaderImageUrl, setTemplateHeaderImageUrl] = useState(
     DEFAULT_TEMPLATE_FALLBACK_DRAFT.templateHeaderImageUrl,
   );
+  const [availableGroups, setAvailableGroups] = useState<GroupOption[]>([]);
+  const [isImportingGroups, setIsImportingGroups] = useState(false);
+  const [isSendingTemplateTest, setIsSendingTemplateTest] = useState(false);
+  const scheduleSubmitLockRef = useRef(false);
 
   const selectedAccountObj = waAccounts.find(
     (account) => account.id === selectedAccount,
@@ -325,6 +589,40 @@ export default function SchedulePage() {
     TEMPLATE_LANGUAGE_OPTIONS.find(
       (option) => option.value === templateLanguageCode,
     ) || TEMPLATE_LANGUAGE_OPTIONS[0];
+  const groupRecipientsById = availableGroups.reduce<Record<string, string>>(
+    (accumulator, group) => {
+      if (group.recipient) {
+        accumulator[group.id] = group.recipient;
+      }
+
+      return accumulator;
+    },
+    {},
+  );
+  const aiRecommendedTimes = useMemo(
+    () => getAiRecommendedTimes(targets, repeat, posts, selectedAccount),
+    [targets, repeat, posts, selectedAccount],
+  );
+  const aiRelevantHistoryCount = useMemo(
+    () => getRelevantPostsForAi(posts, selectedAccount, targets).length,
+    [posts, selectedAccount, targets],
+  );
+  const aiRecommendationText = aiRecommendedTimes
+    .map((time) => formatTimeLabel(time))
+    .join(", ");
+  const aiRecommendationReason =
+    aiRelevantHistoryCount > 0
+      ? `from ${aiRelevantHistoryCount} scheduled post${aiRelevantHistoryCount === 1 ? "" : "s"}, your audience mix, and current local time.`
+      : "from audience engagement patterns and current local time.";
+
+  useEffect(() => {
+    if (timeMode !== "ai") return;
+
+    const primaryRecommendation = aiRecommendedTimes[0] || "9:00";
+    if (!sendTime || !aiRecommendedTimes.includes(sendTime)) {
+      setSendTime(primaryRecommendation);
+    }
+  }, [timeMode, aiRecommendedTimes, sendTime, setSendTime]);
 
   useEffect(() => {
     const accountKey = getTemplateFallbackAccountKey(selectedAccount);
@@ -339,6 +637,43 @@ export default function SchedulePage() {
     setTemplateHeaderImageUrl(draft.templateHeaderImageUrl || "");
     setShowTemplateLanguageMenu(false);
   }, [selectedAccount]);
+
+  useEffect(() => {
+    const accountKey = getTemplateFallbackAccountKey(selectedAccount);
+    const groupsByAccount = readGroupDirectoryByAccount();
+    const groups = Array.isArray(groupsByAccount[accountKey])
+      ? groupsByAccount[accountKey]
+          .filter((group) => Boolean(group?.id) && Boolean(group?.name))
+          .map((group) => ({
+            id: String(group.id),
+            name: String(group.name),
+            members:
+              typeof group.members === "number" &&
+              Number.isFinite(group.members)
+                ? Math.max(0, Math.floor(group.members))
+                : undefined,
+            recipient:
+              typeof group.recipient === "string" && group.recipient.trim()
+                ? group.recipient.trim()
+                : undefined,
+          }))
+      : [];
+
+    setAvailableGroups(groups);
+  }, [selectedAccount]);
+
+  useEffect(() => {
+    if (selectedGroups.length === 0) return;
+
+    const allowedGroupIds = new Set(availableGroups.map((group) => group.id));
+    const filtered = selectedGroups.filter((groupId) =>
+      allowedGroupIds.has(groupId),
+    );
+
+    if (filtered.length !== selectedGroups.length) {
+      setSelectedGroups(filtered);
+    }
+  }, [availableGroups, selectedGroups, setSelectedGroups]);
 
   useEffect(() => {
     const accountKey = getTemplateFallbackAccountKey(selectedAccount);
@@ -409,7 +744,9 @@ export default function SchedulePage() {
   };
 
   const handleSchedule = async () => {
-    if (!canSchedule || isScheduling) return;
+    if (!canSchedule || isScheduling || scheduleSubmitLockRef.current) return;
+
+    scheduleSubmitLockRef.current = true;
     setIsScheduling(true);
 
     try {
@@ -435,6 +772,7 @@ export default function SchedulePage() {
         targets,
         selectedGroups,
         selectedAccountObj?.number || "",
+        groupRecipientsById,
       );
 
       const scheduleResponse = await fetch("/api/schedule-post", {
@@ -532,19 +870,22 @@ export default function SchedulePage() {
         disableForReducedMotion: true,
       });
 
-      toast({
-        title: editingPostId ? "Post updated" : "Post scheduled",
-        description:
-          typeof scheduleResult?.queuedTargets === "number"
-            ? `Queued for ${scheduleResult.queuedTargets} delivery target(s).`
-            : "Your post is ready in the dashboard queue.",
-        variant: "success",
-      });
-
       await new Promise((resolve) => setTimeout(resolve, 600));
-      router.push(
-        `/dashboard?scheduled=1&mode=${editingPostId ? "updated" : "created"}`,
+      const searchParams = new URLSearchParams();
+      searchParams.set("scheduled", "1");
+      searchParams.set("mode", editingPostId ? "updated" : "created");
+      searchParams.set(
+        "toast",
+        typeof scheduleResult?.jobId === "string"
+          ? scheduleResult.jobId
+          : `${Date.now()}`,
       );
+
+      if (typeof scheduleResult?.queuedTargets === "number") {
+        searchParams.set("queued", String(scheduleResult.queuedTargets));
+      }
+
+      router.push(`/dashboard?${searchParams.toString()}`);
     } catch (error) {
       console.error(error);
       toast({
@@ -554,6 +895,244 @@ export default function SchedulePage() {
       });
     } finally {
       setIsScheduling(false);
+      scheduleSubmitLockRef.current = false;
+    }
+  };
+
+  const handleImportGroups = async () => {
+    if (isImportingGroups) return;
+
+    if (!selectedAccount) {
+      toast({
+        title: "Select a WhatsApp account",
+        description: "Choose an account before importing groups.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setIsImportingGroups(true);
+
+    try {
+      const params = new URLSearchParams();
+      params.set("waAccount", selectedAccount);
+
+      if (selectedAccountObj?.number?.trim()) {
+        params.set("accountNumber", selectedAccountObj.number.trim());
+      }
+
+      const response = await fetch(`/api/whatsapp/import-groups?${params}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload?.error === "string"
+            ? payload.error
+            : "Failed to import groups.",
+        );
+      }
+
+      const importedGroups: GroupOption[] = Array.isArray(payload?.groups)
+        ? (payload.groups as Array<Record<string, unknown>>)
+            .filter((group) => Boolean(group?.id) && Boolean(group?.name))
+            .map((group) => ({
+              id: String(group.id),
+              name: String(group.name),
+              members:
+                typeof group.members === "number" &&
+                Number.isFinite(group.members)
+                  ? Math.max(0, Math.floor(group.members))
+                  : undefined,
+              recipient:
+                typeof group.recipient === "string" && group.recipient.trim()
+                  ? group.recipient.trim()
+                  : undefined,
+            }))
+        : [];
+
+      setAvailableGroups(importedGroups);
+
+      const accountKey = getTemplateFallbackAccountKey(selectedAccount);
+      const groupsByAccount = readGroupDirectoryByAccount();
+      groupsByAccount[accountKey] = importedGroups;
+      writeGroupDirectoryByAccount(groupsByAccount);
+
+      toast({
+        title: "Groups imported",
+        description:
+          importedGroups.length > 0
+            ? `Imported ${importedGroups.length} group(s) for this account.`
+            : "No groups were returned by your backend source.",
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Group import failed",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "error",
+      });
+    } finally {
+      setIsImportingGroups(false);
+    }
+  };
+
+  const handleOpenWhatsAppForward = () => {
+    if (selectedGroups.length === 0) {
+      toast({
+        title: "Select groups first",
+        description: "Choose at least one group to forward this message.",
+        variant: "error",
+      });
+      return;
+    }
+
+    if (!captionSource.trim()) {
+      toast({
+        title: "Caption required",
+        description: "Generate or write a caption before forwarding.",
+        variant: "error",
+      });
+      return;
+    }
+
+    const groupNameById = availableGroups.reduce<Record<string, string>>(
+      (accumulator, group) => {
+        accumulator[group.id] = group.name;
+        return accumulator;
+      },
+      {},
+    );
+    const selectedGroupNames = selectedGroups
+      .map((groupId) => groupNameById[groupId])
+      .filter(Boolean);
+    const forwardMessage =
+      selectedGroupNames.length > 0
+        ? `${captionSource.trim()}\n\nForward to groups:\n${selectedGroupNames
+            .map((name, index) => `${index + 1}. ${name}`)
+            .join("\n")}`
+        : captionSource.trim();
+
+    const isMobileDevice =
+      typeof navigator !== "undefined" &&
+      /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+    const encodedMessage = encodeURIComponent(forwardMessage);
+    const mobileDeepLink = `whatsapp://send?text=${encodedMessage}`;
+    const mobileWebFallback = `https://wa.me/?text=${encodedMessage}`;
+    const desktopWebUrl = `https://web.whatsapp.com/send?text=${encodedMessage}`;
+    const primaryUrl = isMobileDevice ? mobileDeepLink : desktopWebUrl;
+
+    const popup = window.open(primaryUrl, "_blank");
+
+    if (!popup) {
+      window.location.assign(
+        isMobileDevice ? mobileWebFallback : desktopWebUrl,
+      );
+      toast({
+        title: "Opening WhatsApp",
+        description:
+          "If your browser blocked the popup, WhatsApp is now opening in this tab.",
+        variant: "info",
+      });
+      return;
+    }
+
+    if (isMobileDevice) {
+      window.setTimeout(() => {
+        if (document.visibilityState === "visible") {
+          window.location.assign(mobileWebFallback);
+        }
+      }, 900);
+    }
+
+    toast({
+      title: "WhatsApp opened",
+      description:
+        "Select your groups in WhatsApp and forward the prepared message.",
+      variant: "info",
+    });
+  };
+
+  const handleSendTemplateTestNow = async () => {
+    if (isSendingTemplateTest) return;
+
+    const destination = selectedAccountObj?.number?.trim() || "";
+    const trimmedTemplateName = templateName.trim();
+
+    if (!destination) {
+      toast({
+        title: "Select a WhatsApp account",
+        description: "Pick an account so we know where to send the test.",
+        variant: "error",
+      });
+      return;
+    }
+
+    if (!trimmedTemplateName) {
+      toast({
+        title: "Template name required",
+        description: "Enter your approved template name before sending a test.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setIsSendingTemplateTest(true);
+
+    try {
+      const response = await fetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "template",
+          to: destination,
+          templateName: trimmedTemplateName,
+          templateLanguageCode: templateLanguageCode.trim(),
+          templateBodyParameters,
+          templateHeaderImageUrl: templateHeaderImageUrlValue || undefined,
+          targetType: "individual",
+          allowMvpTemplateBypass: true,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload?.error === "string"
+            ? payload.error
+            : "Template test send failed",
+        );
+      }
+
+      toast({
+        title:
+          payload?.data?.mvpBypass === true
+            ? "Template test simulated"
+            : "Template test sent",
+        description:
+          payload?.data?.mvpBypass === true
+            ? "MVP bypass is active while your WhatsApp account is under review. You can keep demoing the flow now."
+            : payload?.mode === "mock"
+              ? "Sent in mock mode. Add live Cloud API keys for real delivery."
+              : "Delivered through WhatsApp send API.",
+        variant: payload?.data?.mvpBypass === true ? "info" : "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Template test failed",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "error",
+      });
+    } finally {
+      setIsSendingTemplateTest(false);
     }
   };
 
@@ -829,7 +1408,7 @@ export default function SchedulePage() {
         </motion.div>
 
         <motion.div variants={item} className="glass-card p-4 sm:p-5">
-          <StepHeader icon={FileText} label="Template Fallback" />
+          <StepHeader icon={NotebookPen} label="Template Fallback" />
 
           <button
             onClick={() => setUseTemplateFallback((value) => !value)}
@@ -1021,6 +1600,48 @@ export default function SchedulePage() {
                   publicly reachable over HTTPS.
                 </p>
               </div>
+
+              <button
+                type="button"
+                onClick={handleSendTemplateTestNow}
+                disabled={
+                  isSendingTemplateTest ||
+                  !selectedAccountObj?.number ||
+                  !Boolean(templateName.trim())
+                }
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all"
+                style={{
+                  borderColor: "var(--border)",
+                  background: "var(--bg-primary)",
+                  color: "var(--brand-dark)",
+                  opacity:
+                    isSendingTemplateTest ||
+                    !selectedAccountObj?.number ||
+                    !Boolean(templateName.trim())
+                      ? 0.6
+                      : 1,
+                }}
+              >
+                {isSendingTemplateTest ? (
+                  <>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{
+                        duration: 1,
+                        repeat: Infinity,
+                        ease: "linear",
+                      }}
+                      className="w-4 h-4 border-2 border-[var(--brand-dark)]/30 border-t-[var(--brand-dark)] rounded-full"
+                    />
+                    Sending template test...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    Send template test now
+                  </>
+                )}
+              </button>
             </div>
           )}
         </motion.div>
@@ -1098,14 +1719,14 @@ export default function SchedulePage() {
                 >
                   <Sparkles className="w-4 h-4 text-[var(--brand-dark)] shrink-0" />
                   <p className="text-[11px] text-[var(--text-primary)]">
-                    AI recommends <strong>9AM, 5PM, or 7PM</strong> peak hours
-                    for whatsapp status views.
+                    AI recommends <strong>{aiRecommendationText}</strong> based
+                    {` ${aiRecommendationReason}`}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
                   {TIME_CHIPS.map((time) => {
-                    const isAiTagged = AI_TAG_TIMES.includes(time);
+                    const isAiTagged = aiRecommendedTimes.includes(time);
                     const isActive = sendTime === time;
 
                     return (
@@ -1308,8 +1929,49 @@ export default function SchedulePage() {
                         >
                           Select groups
                         </p>
+                        <div className="mb-2.5 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={handleImportGroups}
+                            disabled={isImportingGroups || !selectedAccount}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all"
+                            style={{
+                              borderColor: "var(--border)",
+                              background: "var(--bg-primary)",
+                              color: "var(--brand-dark)",
+                              opacity:
+                                isImportingGroups || !selectedAccount ? 0.6 : 1,
+                            }}
+                          >
+                            {isImportingGroups
+                              ? "Importing..."
+                              : "Import groups"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleOpenWhatsAppForward}
+                            disabled={
+                              selectedGroups.length === 0 ||
+                              !captionSource.trim()
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all"
+                            style={{
+                              borderColor: "var(--border)",
+                              background: "var(--bg-primary)",
+                              color: "var(--brand-dark)",
+                              opacity:
+                                selectedGroups.length === 0 ||
+                                !captionSource.trim()
+                                  ? 0.6
+                                  : 1,
+                            }}
+                          >
+                            <ArrowUpRight className="w-3.5 h-3.5" />
+                            Open WhatsApp forward
+                          </button>
+                        </div>
                         <div className="space-y-2">
-                          {MOCK_GROUPS.map((group) => {
+                          {availableGroups.map((group) => {
                             const isSelected = selectedGroups.includes(
                               group.id,
                             );
@@ -1335,9 +1997,11 @@ export default function SchedulePage() {
                                 <span className="flex-1 font-medium truncate">
                                   {group.name}
                                 </span>
-                                <span className="text-[10px] shrink-0 opacity-50">
-                                  {group.members}
-                                </span>
+                                {typeof group.members === "number" && (
+                                  <span className="text-[10px] shrink-0 opacity-50">
+                                    {group.members}
+                                  </span>
+                                )}
                                 {isSelected && (
                                   <Check
                                     className="w-3.5 h-3.5 shrink-0"
@@ -1347,6 +2011,31 @@ export default function SchedulePage() {
                               </button>
                             );
                           })}
+
+                          {availableGroups.length === 0 && (
+                            <div
+                              className="rounded-xl border p-4 text-center"
+                              style={{
+                                borderColor: "var(--border)",
+                                background: "var(--bg-elevated)",
+                              }}
+                            >
+                              <p className="text-2xl mb-1.5">📭</p>
+                              <p
+                                className="text-xs font-semibold"
+                                style={{ color: "var(--text-primary)" }}
+                              >
+                                No synced groups yet
+                              </p>
+                              <p
+                                className="text-[11px] mt-1"
+                                style={{ color: "var(--text-muted)" }}
+                              >
+                                Use Import groups to load real groups from your
+                                backend source endpoint.
+                              </p>
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     )}

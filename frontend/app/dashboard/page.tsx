@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -42,17 +42,41 @@ const item = {
 
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<DashboardTabId>("posts");
+  const hasProcessedScheduleToastRef = useRef(false);
 
   useEffect(() => {
+    if (hasProcessedScheduleToastRef.current) return;
+    hasProcessedScheduleToastRef.current = true;
+
     const searchParams = new URLSearchParams(window.location.search);
     const scheduled = searchParams.get("scheduled");
     if (!scheduled) return;
 
     const mode = searchParams.get("mode");
+    const queuedTargets = Number.parseInt(searchParams.get("queued") || "", 10);
+    const toastKey =
+      searchParams.get("toast") ||
+      `${scheduled}:${mode || "created"}:${Number.isFinite(queuedTargets) ? queuedTargets : "na"}`;
+
+    if (typeof window !== "undefined") {
+      const consumedKey = `eazee-dashboard-toast-consumed:${toastKey}`;
+      if (window.sessionStorage.getItem(consumedKey)) {
+        const timeoutId = window.setTimeout(() => {
+          window.history.replaceState({}, "", "/dashboard");
+        }, 0);
+
+        return () => window.clearTimeout(timeoutId);
+      }
+
+      window.sessionStorage.setItem(consumedKey, "1");
+    }
 
     toast({
       title: mode === "updated" ? "Post updated" : "Post scheduled",
-      description: "Your post is now in the dashboard queue.",
+      description:
+        Number.isFinite(queuedTargets) && queuedTargets > 0
+          ? `Queued for ${queuedTargets} delivery target(s).`
+          : "Your post is now in the dashboard queue.",
       variant: "success",
     });
 
@@ -512,95 +536,104 @@ function PaymentsTab() {
             Recent Transactions
           </h3>
         </div>
-        <div className="divide-y divide-[var(--border)]">
-          {transactions.map((tx) => (
-            <div
-              key={tx.id}
-              className="flex items-start gap-3 px-4 sm:px-5 py-3.5 hover:bg-[var(--bg-elevated)] transition-all"
-            >
-              <Image
-                src={dollarIcon}
-                alt=""
-                width={24}
-                height={24}
-                className="w-6 h-6 mt-0.5 shrink-0"
-              />
+        {transactions.length === 0 ? (
+          <div className="p-10 text-center">
+            <p className="text-4xl mb-3">📭</p>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              No payments yet. Confirm orders to see escrow transactions.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--border)]">
+            {transactions.map((tx) => (
+              <div
+                key={tx.id}
+                className="flex items-start gap-3 px-4 sm:px-5 py-3.5 hover:bg-[var(--bg-elevated)] transition-all"
+              >
+                <Image
+                  src={dollarIcon}
+                  alt=""
+                  width={24}
+                  height={24}
+                  className="w-6 h-6 mt-0.5 shrink-0"
+                />
 
-              <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <p
-                    className="text-sm font-semibold truncate"
-                    style={{ color: "var(--text-primary)" }}
-                    title={tx.productName}
-                  >
-                    {tx.productName}
-                  </p>
-
-                  <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
                     <p
-                      className="text-sm font-bold"
+                      className="text-sm font-semibold truncate"
                       style={{ color: "var(--text-primary)" }}
+                      title={tx.productName}
                     >
-                      {formatNumberWithDelimiters(tx.amount)} {tx.currency}
+                      {tx.productName}
                     </p>
-                  </div>
-                </div>
 
-                <div className="mt-0.5 min-w-0 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <Wallet
-                      className="w-3.5 h-3.5 shrink-0"
-                      style={{ color: "var(--brand-dark)" }}
-                    />
-                    <p
-                      className="text-[11px] truncate"
-                      style={{ color: "var(--text-muted)" }}
-                      title={tx.buyer}
-                    >
-                      {tx.buyer.slice(0, 6)}...{tx.buyer.slice(-4)}
-                    </p>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <p
+                        className="text-sm font-bold"
+                        style={{ color: "var(--text-primary)" }}
+                      >
+                        {formatNumberWithDelimiters(tx.amount)} {tx.currency}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-0.5 min-w-0 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      <Wallet
+                        className="w-3.5 h-3.5 shrink-0"
+                        style={{ color: "var(--brand-dark)" }}
+                      />
+                      <p
+                        className="text-[11px] truncate"
+                        style={{ color: "var(--text-muted)" }}
+                        title={tx.buyer}
+                      >
+                        {tx.buyer.slice(0, 6)}...{tx.buyer.slice(-4)}
+                      </p>
+                      <span
+                        className="text-[11px] shrink-0"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        · {getTimeAgo(tx.timestamp)}
+                      </span>
+                    </div>
+
                     <span
-                      className="text-[11px] shrink-0"
-                      style={{ color: "var(--text-muted)" }}
+                      className={cn(
+                        "shrink-0",
+                        tx.escrowStatus === "confirmed"
+                          ? "badge-success"
+                          : tx.escrowStatus === "pending"
+                            ? "badge-pending"
+                            : "badge-error",
+                      )}
                     >
-                      · {getTimeAgo(tx.timestamp)}
+                      {tx.escrowStatus === "confirmed" ? (
+                        <Check className="w-3 h-3" />
+                      ) : (
+                        <Clock className="w-3 h-3" />
+                      )}
+                      {tx.escrowStatus}
                     </span>
                   </div>
-
-                  <span
-                    className={cn(
-                      "shrink-0",
-                      tx.escrowStatus === "confirmed"
-                        ? "badge-success"
-                        : tx.escrowStatus === "pending"
-                          ? "badge-pending"
-                          : "badge-error",
-                    )}
-                  >
-                    {tx.escrowStatus === "confirmed" ? (
-                      <Check className="w-3 h-3" />
-                    ) : (
-                      <Clock className="w-3 h-3" />
-                    )}
-                    {tx.escrowStatus}
-                  </span>
                 </div>
-              </div>
 
-              <a
-                href={`${celoExplorerBaseUrl}/tx/${tx.txHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 hover:bg-[var(--bg-secondary)] transition-all"
-              >
-                <ArrowUpRight
-                  className="w-3.5 h-3.5"
-                  style={{ color: "var(--text-muted)" }}
-                />
-              </a>
-            </div>
-          ))}
-        </div>
+                <a
+                  href={`${celoExplorerBaseUrl}/tx/${tx.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 hover:bg-[var(--bg-secondary)] transition-all"
+                >
+                  <ArrowUpRight
+                    className="w-3.5 h-3.5"
+                    style={{ color: "var(--text-muted)" }}
+                  />
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );

@@ -59,6 +59,7 @@ async function dispatchDueJobs(request: Request) {
 
     const messageIds: string[] = [];
     const errors: string[] = [];
+    const dispatchedRecipients = new Set<string>();
     let sent = 0;
     let failed = 0;
     let skipped = 0;
@@ -68,6 +69,14 @@ async function dispatchDueJobs(request: Request) {
         skipped += 1;
         errors.push(
           `Target '${target.id}' has no mapped recipient phone number for Cloud API dispatch.`,
+        );
+        continue;
+      }
+
+      if (dispatchedRecipients.has(target.recipient)) {
+        skipped += 1;
+        errors.push(
+          `Target '${target.id}' shares recipient '${target.recipient}' with an already-dispatched target. Skipped duplicate send.`,
         );
         continue;
       }
@@ -83,6 +92,7 @@ async function dispatchDueJobs(request: Request) {
 
       if (result.ok) {
         sent += 1;
+        dispatchedRecipients.add(target.recipient);
         if (result.messageId) {
           messageIds.push(result.messageId);
         }

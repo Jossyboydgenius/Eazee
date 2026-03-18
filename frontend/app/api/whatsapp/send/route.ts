@@ -8,6 +8,83 @@ import {
 
 export const runtime = "nodejs";
 
+function getGraphErrorCode(data: unknown): number | undefined {
+  if (!data || typeof data !== "object") return undefined;
+
+  const error = (data as { error?: { code?: unknown } }).error;
+  if (!error || typeof error !== "object") return undefined;
+
+  return typeof error.code === "number" ? error.code : undefined;
+}
+
+function getGraphErrorSubcode(data: unknown): number | undefined {
+  if (!data || typeof data !== "object") return undefined;
+
+  const error = (data as { error?: { error_subcode?: unknown } }).error;
+  if (!error || typeof error !== "object") return undefined;
+
+  return typeof error.error_subcode === "number"
+    ? error.error_subcode
+    : undefined;
+}
+
+function shouldAllowMvpTemplateBypass(body: unknown): boolean {
+  const envMode = process.env.WHATSAPP_TEMPLATE_TEST_MODE?.trim().toLowerCase();
+  if (envMode === "mock" || envMode === "mvp") {
+    return true;
+  }
+
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  return (
+    (body as { allowMvpTemplateBypass?: unknown }).allowMvpTemplateBypass ===
+    true
+  );
+}
+
+function isMvpBypassCandidate(
+  error: string | undefined,
+  data: unknown,
+): boolean {
+  const code = getGraphErrorCode(data);
+  const subcode = getGraphErrorSubcode(data);
+  const errorText = `${error || ""}`.toLowerCase();
+
+  if (
+    code === 190 ||
+    subcode === 467 ||
+    code === 10 ||
+    code === 200 ||
+    code === 131030
+  ) {
+    return true;
+  }
+
+  return (
+    errorText.includes("under review") ||
+    errorText.includes("not approved") ||
+    errorText.includes("permission") ||
+    errorText.includes("invalid") ||
+    errorText.includes("logged out") ||
+    errorText.includes("allowed list")
+  );
+}
+
+function buildMvpTemplateManualUrl(to: string, templateName: string): string {
+  const digits = to.replace(/\D/g, "");
+  const previewText = encodeURIComponent(
+    `MVP template preview (${templateName})`,
+  );
+
+  if (digits) {
+    return `https://wa.me/${digits}?text=${previewText}`;
+  }
+
+  return `https://wa.me/?text=${previewText}`;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -39,6 +116,7 @@ export async function POST(request: Request) {
         : undefined;
     const enableDeadlineTemplateFallback =
       body?.enableDeadlineTemplateFallback !== false;
+    const allowMvpTemplateBypass = shouldAllowMvpTemplateBypass(body);
 
     if (!to) {
       return NextResponse.json(
@@ -77,6 +155,26 @@ export async function POST(request: Request) {
         bodyParameters: templateBodyParameters,
         headerImageUrl: templateHeaderImageUrl,
       });
+
+      if (
+        !result.ok &&
+        allowMvpTemplateBypass &&
+        isMvpBypassCandidate(result.error, result.data)
+      ) {
+        return NextResponse.json({
+          success: true,
+          mode: "mock",
+          messageId: `wamid.mvp.${Date.now()}`,
+          data: {
+            mvpBypass: true,
+            warning:
+              "Template send is in MVP bypass mode (live delivery blocked).",
+            liveError: result.error,
+            liveDetails: result.data,
+            manualSendUrl: buildMvpTemplateManualUrl(to, templateName),
+          },
+        });
+      }
     } else {
       if (!textBody) {
         return NextResponse.json(
