@@ -166,6 +166,28 @@ MVP behavior:
 - If `WHATSAPP_GROUPS_SOURCE_URL` is missing in non-production (or `WHATSAPP_GROUPS_ALLOW_MOCK=true`), import route returns mock groups so UI stays usable.
 - If template test fails due account/token readiness and `WHATSAPP_TEMPLATE_TEST_MODE=mock`, `/api/whatsapp/send` returns a mock success payload for demo continuity.
 
+Current feature readiness:
+
+- Compose, Schedule, Groups Import, Open WhatsApp Forward, and Template Test flows are usable once valid Cloud API credentials are set.
+- Live sends to arbitrary numbers remain restricted until Meta go-live/business approval; during test mode, use allowlisted recipients in Meta App Dashboard → WhatsApp → API Setup.
+
+### Template Test Script (Graph API)
+
+Run direct Graph API checks for default templates (`hello_world`, `promo_dynamic_v1`) and optional extra template names:
+
+```bash
+npm run test:wa-templates -- --to=2349034018552
+npm run test:wa-templates -- --to=2349034018552 --template=eazee --template=eazeee
+```
+
+Optional overrides:
+
+- `--language=en_US` for extra templates
+- `--dry-run` to preview payloads without sending
+- `--version=v22.0`, `--phone-id=<id>`, `--token=<token>`
+
+You can customize default `promo_dynamic_v1` parameters via `WHATSAPP_PROMO_DYNAMIC_PARAMS`, e.g. `Jossy|Ankara Bundle|12%|11:59 PM`.
+
 ## Setup Guides
 
 - Cron trigger setup: `CRON_TRIGGER_README.md`
