@@ -28,6 +28,14 @@ import addAPhotoIcon from "@/svg/add-a-photo.svg";
 import calendarIcon from "@/svg/calendar.svg";
 import announcementMegaphoneIcon from "@/svg/announcement-megaphone.svg";
 
+type MessagingProvider = "whatsapp" | "telegram";
+
+const MESSAGING_PROVIDER: MessagingProvider =
+  process.env.NEXT_PUBLIC_EAZEE_MESSAGING_PROVIDER?.trim().toLowerCase() ===
+  "telegram"
+    ? "telegram"
+    : "whatsapp";
+
 const REPEAT_OPTIONS = [
   { id: "one-time", label: "One-time", icon: "1️⃣" },
   { id: "daily", label: "Daily", icon: "📅" },
@@ -103,6 +111,12 @@ interface GroupOption {
   name: string;
   members?: number;
   recipient?: string;
+}
+
+interface AllowlistChecklistState {
+  recipient: string;
+  templateName: string;
+  graphErrorCode?: number;
 }
 
 type GroupDirectoryByAccount = Record<string, GroupOption[]>;
@@ -220,13 +234,32 @@ function normalizeRecipientPhone(value: string): string {
   return `+${normalized}`;
 }
 
+function normalizeTelegramRecipient(value: string): string {
+  return value.trim().replace(/\s+/g, "");
+}
+
+function normalizeRecipientForProvider(
+  value: string,
+  provider: MessagingProvider,
+): string {
+  if (provider === "telegram") {
+    return normalizeTelegramRecipient(value);
+  }
+
+  return normalizeRecipientPhone(value);
+}
+
 function buildTargetRecipients(
   targets: string[],
   selectedGroups: string[],
   accountNumber: string,
   groupRecipientsById: Record<string, string>,
+  provider: MessagingProvider,
 ): Record<string, string> {
-  const normalizedAccount = normalizeRecipientPhone(accountNumber);
+  const normalizedAccount = normalizeRecipientForProvider(
+    accountNumber,
+    provider,
+  );
   if (!normalizedAccount) return {};
 
   const recipients: Record<string, string> = {};
@@ -235,8 +268,9 @@ function buildTargetRecipients(
     if (target === "groups") {
       if (selectedGroups.length > 0) {
         for (const groupId of selectedGroups) {
-          const groupRecipient = normalizeRecipientPhone(
+          const groupRecipient = normalizeRecipientForProvider(
             groupRecipientsById[groupId] || normalizedAccount,
+            provider,
           );
 
           if (groupRecipient) {
@@ -302,6 +336,16 @@ function toTimeChip(value: string): string | null {
   return TIME_CHIPS[nearestIndex] || null;
 }
 
+function buildStableScoreSeed(value: string): number {
+  let seed = 0;
+
+  for (const char of value) {
+    seed = (seed * 31 + char.charCodeAt(0)) % 2147483647;
+  }
+
+  return seed;
+}
+
 function getRelevantPostsForAi(
   posts: ScheduledPost[],
   selectedAccountId: string,
@@ -338,8 +382,17 @@ function getAiRecommendedTimes(
   const isWeekend = [0, 6].includes(now.getDay());
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const shouldPenalizePastToday = currentHour < 21.5;
+  const rotationSeed = buildStableScoreSeed(
+    `${selectedAccountId}|${[...targets].sort().join(",")}|${repeatValue}|${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`,
+  );
+  const rotatingAnchorTime =
+    TIME_CHIPS[rotationSeed % TIME_CHIPS.length] || TIME_CHIPS[0];
 
-  const relevantPosts = getRelevantPostsForAi(posts, selectedAccountId, targets);
+  const relevantPosts = getRelevantPostsForAi(
+    posts,
+    selectedAccountId,
+    targets,
+  );
   const usageByTime = relevantPosts.reduce<
     Record<string, { scheduled: number; sent: number; failed: number }>
   >((accumulator, post) => {
@@ -348,18 +401,24 @@ function getAiRecommendedTimes(
       return accumulator;
     }
 
+    const createdAtMs = Date.parse(post.createdAt || "");
+    const ageInDays = Number.isFinite(createdAtMs)
+      ? Math.max(0, (now.getTime() - createdAtMs) / (1000 * 60 * 60 * 24))
+      : 60;
+    const recencyWeight = Math.max(0.35, 1 - ageInDays / 60);
+
     const existing = accumulator[normalizedTime] || {
       scheduled: 0,
       sent: 0,
       failed: 0,
     };
 
-    existing.scheduled += 1;
+    existing.scheduled += recencyWeight;
     if (post.status === "sent") {
-      existing.sent += 1;
+      existing.sent += recencyWeight * 1.1;
     }
     if (post.status === "failed") {
-      existing.failed += 1;
+      existing.failed += recencyWeight * 1.2;
     }
 
     accumulator[normalizedTime] = existing;
@@ -422,6 +481,10 @@ function getAiRecommendedTimes(
       if (currentHour < 10 && hourValue >= 8 && hourValue <= 12) {
         score += 4;
       }
+
+      if (time === rotatingAnchorTime) {
+        score += 5;
+      }
     }
 
     return {
@@ -445,6 +508,63 @@ function getAiRecommendedTimes(
     })
     .slice(0, 3)
     .map((entry) => entry.time);
+}
+
+function getGraphErrorCodeFromPayload(data: unknown): number | undefined {
+  if (!data || typeof data !== "object") return undefined;
+
+  const error = (data as { error?: { code?: unknown } }).error;
+  if (!error || typeof error !== "object") return undefined;
+
+  return typeof error.code === "number" ? error.code : undefined;
+}
+
+function getTemplateTestGraphErrorCode(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const payloadRecord = payload as {
+    details?: unknown;
+    data?: { liveDetails?: unknown };
+  };
+
+  return (
+    getGraphErrorCodeFromPayload(payloadRecord.data?.liveDetails) ||
+    getGraphErrorCodeFromPayload(payloadRecord.details) ||
+    getGraphErrorCodeFromPayload(payload)
+  );
+}
+
+function isAllowlistErrorPayload(payload: unknown): boolean {
+  const graphErrorCode = getTemplateTestGraphErrorCode(payload);
+  if (graphErrorCode === 131030) {
+    return true;
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const payloadRecord = payload as {
+    error?: unknown;
+    details?: { error?: { message?: unknown } };
+    data?: { liveError?: unknown };
+  };
+
+  const text = [
+    typeof payloadRecord.error === "string" ? payloadRecord.error : "",
+    typeof payloadRecord.data?.liveError === "string"
+      ? payloadRecord.data.liveError
+      : "",
+    typeof payloadRecord.details?.error?.message === "string"
+      ? payloadRecord.details.error.message
+      : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return text.includes("allowed list") || text.includes("allowlist");
 }
 
 function formatTimeLabel(time: string): string {
@@ -541,7 +661,12 @@ export default function SchedulePage() {
   const [availableGroups, setAvailableGroups] = useState<GroupOption[]>([]);
   const [isImportingGroups, setIsImportingGroups] = useState(false);
   const [isSendingTemplateTest, setIsSendingTemplateTest] = useState(false);
+  const [allowlistChecklist, setAllowlistChecklist] =
+    useState<AllowlistChecklistState | null>(null);
   const scheduleSubmitLockRef = useRef(false);
+  const isTelegramProvider = MESSAGING_PROVIDER === "telegram";
+  const platformLabel = isTelegramProvider ? "Telegram" : "WhatsApp";
+  const showTemplateFallbackSection = !isTelegramProvider;
 
   const selectedAccountObj = waAccounts.find(
     (account) => account.id === selectedAccount,
@@ -578,7 +703,9 @@ export default function SchedulePage() {
     (timeMode === "custom" ? customDateTime : sendTime) &&
     targets.length > 0 &&
     (!targets.includes("groups") || selectedGroups.length > 0) &&
-    (!useTemplateFallback || Boolean(templateName.trim()));
+    (!showTemplateFallbackSection ||
+      !useTemplateFallback ||
+      Boolean(templateName.trim()));
 
   const templateBodyParameters = templateBodyParamsInput
     .split("|")
@@ -698,6 +825,21 @@ export default function SchedulePage() {
   ]);
 
   const formatWhatsAppNumber = (value: string) => {
+    if (isTelegramProvider) {
+      const normalized = normalizeTelegramRecipient(value);
+      if (!normalized) return null;
+
+      if (/^@[A-Za-z0-9_]{5,}$/.test(normalized)) {
+        return normalized;
+      }
+
+      if (/^-?\d{5,}$/.test(normalized)) {
+        return normalized;
+      }
+
+      return null;
+    }
+
     const digitsOnly = value.replace(/\D/g, "");
     if (!digitsOnly) return null;
 
@@ -726,10 +868,16 @@ export default function SchedulePage() {
 
     const formattedNumber = formatWhatsAppNumber(number);
     if (!formattedNumber) {
-      setNewAccountNumberError("Enter a valid WhatsApp number (digits only).");
+      setNewAccountNumberError(
+        isTelegramProvider
+          ? "Enter a valid Telegram chat id (e.g. -100... or @channelusername)."
+          : "Enter a valid WhatsApp number (digits only).",
+      );
       toast({
-        title: "Invalid WhatsApp number",
-        description: "Use a valid local or international number.",
+        title: `Invalid ${platformLabel} destination`,
+        description: isTelegramProvider
+          ? "Use a numeric chat id (example: -1001234567890) or @username."
+          : "Use a valid local or international number.",
         variant: "error",
       });
       return;
@@ -773,6 +921,7 @@ export default function SchedulePage() {
         selectedGroups,
         selectedAccountObj?.number || "",
         groupRecipientsById,
+        MESSAGING_PROVIDER,
       );
 
       const scheduleResponse = await fetch("/api/schedule-post", {
@@ -782,15 +931,22 @@ export default function SchedulePage() {
         },
         body: JSON.stringify({
           caption: captionSource,
-          templateName: useTemplateFallback ? templateName.trim() : undefined,
-          templateLanguageCode: useTemplateFallback
-            ? templateLanguageCode.trim()
-            : undefined,
-          templateBodyParameters: useTemplateFallback
-            ? templateBodyParameters
-            : undefined,
+          templateName:
+            showTemplateFallbackSection && useTemplateFallback
+              ? templateName.trim()
+              : undefined,
+          templateLanguageCode:
+            showTemplateFallbackSection && useTemplateFallback
+              ? templateLanguageCode.trim()
+              : undefined,
+          templateBodyParameters:
+            showTemplateFallbackSection && useTemplateFallback
+              ? templateBodyParameters
+              : undefined,
           templateHeaderImageUrl:
-            useTemplateFallback && templateHeaderImageUrlValue
+            showTemplateFallbackSection &&
+            useTemplateFallback &&
+            templateHeaderImageUrlValue
               ? templateHeaderImageUrlValue
               : undefined,
           postType,
@@ -839,15 +995,22 @@ export default function SchedulePage() {
         brief,
         tone,
         caption: captionSource,
-        templateName: useTemplateFallback ? templateName.trim() : undefined,
-        templateLanguageCode: useTemplateFallback
-          ? templateLanguageCode.trim()
-          : undefined,
-        templateBodyParameters: useTemplateFallback
-          ? templateBodyParameters
-          : undefined,
+        templateName:
+          showTemplateFallbackSection && useTemplateFallback
+            ? templateName.trim()
+            : undefined,
+        templateLanguageCode:
+          showTemplateFallbackSection && useTemplateFallback
+            ? templateLanguageCode.trim()
+            : undefined,
+        templateBodyParameters:
+          showTemplateFallbackSection && useTemplateFallback
+            ? templateBodyParameters
+            : undefined,
         templateHeaderImageUrl:
-          useTemplateFallback && templateHeaderImageUrlValue
+          showTemplateFallbackSection &&
+          useTemplateFallback &&
+          templateHeaderImageUrlValue
             ? templateHeaderImageUrlValue
             : undefined,
         hasCeloPayment,
@@ -904,7 +1067,7 @@ export default function SchedulePage() {
 
     if (!selectedAccount) {
       toast({
-        title: "Select a WhatsApp account",
+        title: `Select a ${platformLabel} destination`,
         description: "Choose an account before importing groups.",
         variant: "error",
       });
@@ -981,6 +1144,26 @@ export default function SchedulePage() {
     }
   };
 
+  const buildForwardMessage = () => {
+    const groupNameById = availableGroups.reduce<Record<string, string>>(
+      (accumulator, group) => {
+        accumulator[group.id] = group.name;
+        return accumulator;
+      },
+      {},
+    );
+
+    const selectedGroupNames = selectedGroups
+      .map((groupId) => groupNameById[groupId])
+      .filter(Boolean);
+
+    return selectedGroupNames.length > 0
+      ? `${captionSource.trim()}\n\nForward to groups:\n${selectedGroupNames
+          .map((name, index) => `${index + 1}. ${name}`)
+          .join("\n")}`
+      : captionSource.trim();
+  };
+
   const handleOpenWhatsAppForward = () => {
     if (selectedGroups.length === 0) {
       toast({
@@ -1000,23 +1183,7 @@ export default function SchedulePage() {
       return;
     }
 
-    const groupNameById = availableGroups.reduce<Record<string, string>>(
-      (accumulator, group) => {
-        accumulator[group.id] = group.name;
-        return accumulator;
-      },
-      {},
-    );
-    const selectedGroupNames = selectedGroups
-      .map((groupId) => groupNameById[groupId])
-      .filter(Boolean);
-    const forwardMessage =
-      selectedGroupNames.length > 0
-        ? `${captionSource.trim()}\n\nForward to groups:\n${selectedGroupNames
-            .map((name, index) => `${index + 1}. ${name}`)
-            .join("\n")}`
-        : captionSource.trim();
-
+    const forwardMessage = buildForwardMessage();
     const isMobileDevice =
       typeof navigator !== "undefined" &&
       /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -1053,6 +1220,56 @@ export default function SchedulePage() {
       title: "WhatsApp opened",
       description:
         "Select your groups in WhatsApp and forward the prepared message.",
+      variant: "info",
+    });
+  };
+
+  const handleOpenTelegramForward = () => {
+    if (selectedGroups.length === 0) {
+      toast({
+        title: "Select groups first",
+        description: "Choose at least one group to forward this message.",
+        variant: "error",
+      });
+      return;
+    }
+
+    if (!captionSource.trim()) {
+      toast({
+        title: "Caption required",
+        description: "Generate or write a caption before forwarding.",
+        variant: "error",
+      });
+      return;
+    }
+
+    const forwardMessage = buildForwardMessage();
+    const encodedMessage = encodeURIComponent(forwardMessage);
+    const fallbackShareUrl = `https://t.me/share/url?url=${encodeURIComponent("https://eazee.app")}&text=${encodedMessage}`;
+    const deepLink = `tg://msg_url?url=${encodeURIComponent("https://eazee.app")}&text=${encodedMessage}`;
+    const popup = window.open(deepLink, "_blank");
+
+    if (!popup) {
+      window.location.assign(fallbackShareUrl);
+      toast({
+        title: "Opening Telegram",
+        description:
+          "If your browser blocked the popup, Telegram share is opening in this tab.",
+        variant: "info",
+      });
+      return;
+    }
+
+    window.setTimeout(() => {
+      if (document.visibilityState === "visible") {
+        window.open(fallbackShareUrl, "_blank");
+      }
+    }, 900);
+
+    toast({
+      title: "Telegram opened",
+      description:
+        "Select the destination in Telegram and forward the prepared message.",
       variant: "info",
     });
   };
@@ -1102,6 +1319,18 @@ export default function SchedulePage() {
       });
 
       const payload = await response.json().catch(() => ({}));
+      const graphErrorCode = getTemplateTestGraphErrorCode(payload);
+      const hasAllowlistError = isAllowlistErrorPayload(payload);
+
+      if (hasAllowlistError) {
+        setAllowlistChecklist({
+          recipient: destination,
+          templateName: trimmedTemplateName,
+          graphErrorCode,
+        });
+      } else if (response.ok) {
+        setAllowlistChecklist(null);
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -1118,7 +1347,11 @@ export default function SchedulePage() {
             : "Template test sent",
         description:
           payload?.data?.mvpBypass === true
-            ? "MVP bypass is active while your WhatsApp account is under review. You can keep demoing the flow now."
+            ? String(payload?.data?.liveError || "")
+                .toLowerCase()
+                .includes("allowed list")
+              ? "MVP bypass is active because this recipient is not yet in your WhatsApp test allowlist. You can keep demoing while you add/verify the number in Meta."
+              : "MVP bypass is active because live template delivery is currently blocked. You can keep demoing the flow now."
             : payload?.mode === "mock"
               ? "Sent in mock mode. Add live Cloud API keys for real delivery."
               : "Delivered through WhatsApp send API.",
@@ -1219,7 +1452,12 @@ export default function SchedulePage() {
         )}
 
         <motion.div variants={item} className="glass-card p-4 sm:p-5">
-          <StepHeader icon={Phone} label="WhatsApp Account" />
+          <StepHeader
+            icon={Phone}
+            label={
+              isTelegramProvider ? "Telegram Destination" : "WhatsApp Account"
+            }
+          />
 
           <div className="relative">
             <button
@@ -1244,7 +1482,7 @@ export default function SchedulePage() {
                   className="text-sm font-semibold truncate"
                   style={{ color: "var(--text-primary)" }}
                 >
-                  {selectedAccountObj?.label || "Select account"}
+                  {selectedAccountObj?.label || "Select destination"}
                 </p>
                 <p
                   className="text-xs truncate"
@@ -1345,8 +1583,11 @@ export default function SchedulePage() {
                             <input
                               value={newAccountNumber}
                               onChange={(event) => {
+                                const inputValue = event.target.value;
                                 setNewAccountNumber(
-                                  event.target.value.replace(/\D/g, ""),
+                                  isTelegramProvider
+                                    ? inputValue.replace(/\s+/g, "")
+                                    : inputValue.replace(/\D/g, ""),
                                 );
                                 if (newAccountNumberError) {
                                   setNewAccountNumberError("");
@@ -1358,13 +1599,23 @@ export default function SchedulePage() {
                                   !formatWhatsAppNumber(newAccountNumber)
                                 ) {
                                   setNewAccountNumberError(
-                                    "Enter a valid WhatsApp number (digits only).",
+                                    isTelegramProvider
+                                      ? "Enter a valid Telegram chat id (e.g. -100... or @channelusername)."
+                                      : "Enter a valid WhatsApp number (digits only).",
                                   );
                                 }
                               }}
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              placeholder="WhatsApp number (include country code)"
+                              inputMode={
+                                isTelegramProvider ? "text" : "numeric"
+                              }
+                              pattern={
+                                isTelegramProvider ? undefined : "[0-9]*"
+                              }
+                              placeholder={
+                                isTelegramProvider
+                                  ? "Telegram chat id (e.g. -1001234567890 or @channelusername)"
+                                  : "WhatsApp number (include country code)"
+                              }
                               className="input-base"
                             />
                             {newAccountNumberError && (
@@ -1380,7 +1631,7 @@ export default function SchedulePage() {
                                 className="text-[11px]"
                                 style={{ color: "var(--text-muted)" }}
                               >
-                                Formatted: {formattedNewAccountNumber}
+                                Destination: {formattedNewAccountNumber}
                               </p>
                             )}
                             <button
@@ -1407,244 +1658,296 @@ export default function SchedulePage() {
           </div>
         </motion.div>
 
-        <motion.div variants={item} className="glass-card p-4 sm:p-5">
-          <StepHeader icon={NotebookPen} label="Template Fallback" />
+        {showTemplateFallbackSection && (
+          <motion.div variants={item} className="glass-card p-4 sm:p-5">
+            <StepHeader icon={NotebookPen} label="Template Fallback" />
 
-          <button
-            onClick={() => setUseTemplateFallback((value) => !value)}
-            className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition-all"
-            style={{
-              background: "var(--bg-elevated)",
-              borderColor: "var(--border)",
-            }}
-          >
-            <div>
-              <p
-                className="text-sm font-semibold"
-                style={{ color: "var(--text-primary)" }}
-              >
-                Use approved template when text send is blocked
-              </p>
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Recommended for pre-verification/demo reliability.
-              </p>
-            </div>
-            <div
-              className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+            <button
+              onClick={() => setUseTemplateFallback((value) => !value)}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition-all"
               style={{
-                borderColor: useTemplateFallback
-                  ? "var(--brand-green)"
-                  : "var(--border)",
-                background: useTemplateFallback
-                  ? "var(--brand-green)"
-                  : "transparent",
+                background: "var(--bg-elevated)",
+                borderColor: "var(--border)",
               }}
             >
-              {useTemplateFallback && (
-                <Check className="w-3 h-3 text-white" strokeWidth={3} />
-              )}
-            </div>
-          </button>
-
-          {useTemplateFallback && (
-            <div className="mt-3 space-y-3">
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-[var(--text-secondary)]">
-                  Template name (required)
-                </p>
-                <input
-                  value={templateName}
-                  onChange={(event) => setTemplateName(event.target.value)}
-                  placeholder="e.g. hello_world or eazee_offer_v1"
-                  className="input-base"
-                />
+              <div>
                 <p
-                  className="text-[11px]"
-                  style={{ color: "var(--text-muted)" }}
+                  className="text-sm font-semibold"
+                  style={{ color: "var(--text-primary)" }}
                 >
-                  Use the exact approved template slug from WhatsApp Manager.
+                  Use approved template when text send is blocked
+                </p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  Recommended for pre-verification/demo reliability.
                 </p>
               </div>
+              <div
+                className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+                style={{
+                  borderColor: useTemplateFallback
+                    ? "var(--brand-green)"
+                    : "var(--border)",
+                  background: useTemplateFallback
+                    ? "var(--brand-green)"
+                    : "transparent",
+                }}
+              >
+                {useTemplateFallback && (
+                  <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                )}
+              </div>
+            </button>
 
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-[var(--text-secondary)]">
-                  Language code (required)
-                </p>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowTemplateLanguageMenu((open) => !open)}
-                    className="w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all"
+            {useTemplateFallback && (
+              <div className="mt-3 space-y-3">
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                    Template name (required)
+                  </p>
+                  <input
+                    value={templateName}
+                    onChange={(event) => setTemplateName(event.target.value)}
+                    placeholder="e.g. hello_world or eazee_offer_v1"
+                    className="input-base"
+                  />
+                  <p
+                    className="text-[11px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Use the exact approved template slug from WhatsApp Manager.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                    Language code (required)
+                  </p>
+                  <div className="relative">
+                    <button
+                      onClick={() =>
+                        setShowTemplateLanguageMenu((open) => !open)
+                      }
+                      className="w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all"
+                      style={{
+                        background: "var(--bg-elevated)",
+                        borderColor: "var(--border)",
+                      }}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className="text-sm font-semibold truncate"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {selectedTemplateLanguageOption.label}
+                        </p>
+                        <p
+                          className="text-xs truncate"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          Approved template locale
+                        </p>
+                      </div>
+                      <ChevronDown
+                        className={cn(
+                          "w-4 h-4 shrink-0 transition-transform",
+                          showTemplateLanguageMenu && "rotate-180",
+                        )}
+                        style={{ color: "var(--text-muted)" }}
+                      />
+                    </button>
+
+                    <AnimatePresence>
+                      {showTemplateLanguageMenu && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          className="absolute top-full left-0 right-0 mt-1.5 rounded-xl border overflow-hidden z-40 shadow-xl"
+                          style={{
+                            background: "var(--bg-card)",
+                            borderColor: "var(--border)",
+                          }}
+                        >
+                          {TEMPLATE_LANGUAGE_OPTIONS.map((option) => {
+                            const isSelected =
+                              option.value === templateLanguageCode;
+
+                            return (
+                              <button
+                                key={option.value}
+                                onClick={() => {
+                                  setTemplateLanguageCode(option.value);
+                                  setShowTemplateLanguageMenu(false);
+                                }}
+                                className={cn(
+                                  "w-full flex items-center gap-3 px-4 py-3.5 text-sm transition-all text-left",
+                                  isSelected ? "font-semibold" : "",
+                                )}
+                                style={{
+                                  color: isSelected
+                                    ? "var(--brand-dark)"
+                                    : "var(--text-secondary)",
+                                  background: isSelected
+                                    ? "var(--brand-dim)"
+                                    : "transparent",
+                                }}
+                              >
+                                <span className="flex-1 truncate">
+                                  {option.label}
+                                </span>
+                                {isSelected && (
+                                  <Check className="w-4 h-4 ml-auto" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <p
+                    className="text-[11px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Must match the exact approved language on WhatsApp Manager.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                    Body parameters (optional)
+                  </p>
+                  <input
+                    value={templateBodyParamsInput}
+                    onChange={(event) =>
+                      setTemplateBodyParamsInput(event.target.value)
+                    }
+                    placeholder="Use | separator, e.g. Ada|Fabric Bundle|15%|31 Mar"
+                    className="input-base"
+                  />
+                  <p
+                    className="text-[11px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Order must match template placeholders in sequence (1st,
+                    2nd, 3rd, ...).
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                    Media header image URL (optional)
+                  </p>
+                  <input
+                    value={templateHeaderImageUrl}
+                    onChange={(event) =>
+                      setTemplateHeaderImageUrl(event.target.value)
+                    }
+                    placeholder="https://your-domain.com/product-image.jpg"
+                    className="input-base"
+                  />
+                  <p
+                    className="text-[11px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Use this only for templates with IMAGE header. The URL must
+                    be publicly reachable over HTTPS.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSendTemplateTestNow}
+                  disabled={
+                    isSendingTemplateTest ||
+                    !selectedAccountObj?.number ||
+                    !Boolean(templateName.trim())
+                  }
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all"
+                  style={{
+                    borderColor: "var(--border)",
+                    background: "var(--bg-primary)",
+                    color: "var(--brand-dark)",
+                    opacity:
+                      isSendingTemplateTest ||
+                      !selectedAccountObj?.number ||
+                      !Boolean(templateName.trim())
+                        ? 0.6
+                        : 1,
+                  }}
+                >
+                  {isSendingTemplateTest ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                        className="w-4 h-4 border-2 border-[var(--brand-dark)]/30 border-t-[var(--brand-dark)] rounded-full"
+                      />
+                      Sending template test...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      Send template test now
+                    </>
+                  )}
+                </button>
+
+                {allowlistChecklist && (
+                  <div
+                    className="mt-3 rounded-xl border p-3 space-y-1"
                     style={{
                       background: "var(--bg-elevated)",
                       borderColor: "var(--border)",
                     }}
                   >
-                    <div className="flex-1 min-w-0">
-                      <p
-                        className="text-sm font-semibold truncate"
-                        style={{ color: "var(--text-primary)" }}
-                      >
-                        {selectedTemplateLanguageOption.label}
-                      </p>
-                      <p
-                        className="text-xs truncate"
-                        style={{ color: "var(--text-muted)" }}
-                      >
-                        Approved template locale
-                      </p>
-                    </div>
-                    <ChevronDown
-                      className={cn(
-                        "w-4 h-4 shrink-0 transition-transform",
-                        showTemplateLanguageMenu && "rotate-180",
-                      )}
-                      style={{ color: "var(--text-muted)" }}
-                    />
-                  </button>
-
-                  <AnimatePresence>
-                    {showTemplateLanguageMenu && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -6 }}
-                        className="absolute top-full left-0 right-0 mt-1.5 rounded-xl border overflow-hidden z-40 shadow-xl"
-                        style={{
-                          background: "var(--bg-card)",
-                          borderColor: "var(--border)",
-                        }}
-                      >
-                        {TEMPLATE_LANGUAGE_OPTIONS.map((option) => {
-                          const isSelected =
-                            option.value === templateLanguageCode;
-
-                          return (
-                            <button
-                              key={option.value}
-                              onClick={() => {
-                                setTemplateLanguageCode(option.value);
-                                setShowTemplateLanguageMenu(false);
-                              }}
-                              className={cn(
-                                "w-full flex items-center gap-3 px-4 py-3.5 text-sm transition-all text-left",
-                                isSelected ? "font-semibold" : "",
-                              )}
-                              style={{
-                                color: isSelected
-                                  ? "var(--brand-dark)"
-                                  : "var(--text-secondary)",
-                                background: isSelected
-                                  ? "var(--brand-dim)"
-                                  : "transparent",
-                              }}
-                            >
-                              <span className="flex-1 truncate">
-                                {option.label}
-                              </span>
-                              {isSelected && (
-                                <Check className="w-4 h-4 ml-auto" />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-                <p
-                  className="text-[11px]"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  Must match the exact approved language on WhatsApp Manager.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-[var(--text-secondary)]">
-                  Body parameters (optional)
-                </p>
-                <input
-                  value={templateBodyParamsInput}
-                  onChange={(event) =>
-                    setTemplateBodyParamsInput(event.target.value)
-                  }
-                  placeholder="Use | separator, e.g. Ada|Fabric Bundle|15%|31 Mar"
-                  className="input-base"
-                />
-                <p
-                  className="text-[11px]"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  Order must match template placeholders in sequence (1st, 2nd,
-                  3rd, ...).
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-[var(--text-secondary)]">
-                  Media header image URL (optional)
-                </p>
-                <input
-                  value={templateHeaderImageUrl}
-                  onChange={(event) =>
-                    setTemplateHeaderImageUrl(event.target.value)
-                  }
-                  placeholder="https://your-domain.com/product-image.jpg"
-                  className="input-base"
-                />
-                <p
-                  className="text-[11px]"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  Use this only for templates with IMAGE header. The URL must be
-                  publicly reachable over HTTPS.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleSendTemplateTestNow}
-                disabled={
-                  isSendingTemplateTest ||
-                  !selectedAccountObj?.number ||
-                  !Boolean(templateName.trim())
-                }
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-all"
-                style={{
-                  borderColor: "var(--border)",
-                  background: "var(--bg-primary)",
-                  color: "var(--brand-dark)",
-                  opacity:
-                    isSendingTemplateTest ||
-                    !selectedAccountObj?.number ||
-                    !Boolean(templateName.trim())
-                      ? 0.6
-                      : 1,
-                }}
-              >
-                {isSendingTemplateTest ? (
-                  <>
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{
-                        duration: 1,
-                        repeat: Infinity,
-                        ease: "linear",
-                      }}
-                      className="w-4 h-4 border-2 border-[var(--brand-dark)]/30 border-t-[var(--brand-dark)] rounded-full"
-                    />
-                    Sending template test...
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    Send template test now
-                  </>
+                    <p
+                      className="text-xs font-semibold"
+                      style={{ color: "var(--text-primary)" }}
+                    >
+                      Recipient allowlist required
+                      {typeof allowlistChecklist.graphErrorCode === "number"
+                        ? ` (${allowlistChecklist.graphErrorCode})`
+                        : ""}
+                    </p>
+                    <p
+                      className="text-[11px]"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      Template {allowlistChecklist.templateName} to{" "}
+                      {allowlistChecklist.recipient} is blocked until this
+                      number is in your Meta test recipient list.
+                    </p>
+                    <p
+                      className="text-[11px]"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      1) Meta App Dashboard → WhatsApp → API Setup.
+                    </p>
+                    <p
+                      className="text-[11px]"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      2) Add and verify this phone number under the test
+                      recipient list.
+                    </p>
+                    <p
+                      className="text-[11px]"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      3) Retry the test; until Meta go-live, only allowlisted
+                      recipients can receive Cloud API template tests.
+                    </p>
+                  </div>
                 )}
-              </button>
-            </div>
-          )}
-        </motion.div>
+              </div>
+            )}
+          </motion.div>
+        )}
 
         <motion.div variants={item} className="glass-card p-4 sm:p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1947,28 +2250,53 @@ export default function SchedulePage() {
                               ? "Importing..."
                               : "Import groups"}
                           </button>
-                          <button
-                            type="button"
-                            onClick={handleOpenWhatsAppForward}
-                            disabled={
-                              selectedGroups.length === 0 ||
-                              !captionSource.trim()
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all"
-                            style={{
-                              borderColor: "var(--border)",
-                              background: "var(--bg-primary)",
-                              color: "var(--brand-dark)",
-                              opacity:
+                          {isTelegramProvider ? (
+                            <button
+                              type="button"
+                              onClick={handleOpenTelegramForward}
+                              disabled={
                                 selectedGroups.length === 0 ||
                                 !captionSource.trim()
-                                  ? 0.6
-                                  : 1,
-                            }}
-                          >
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                            Open WhatsApp forward
-                          </button>
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all"
+                              style={{
+                                borderColor: "var(--border)",
+                                background: "var(--bg-primary)",
+                                color: "var(--brand-dark)",
+                                opacity:
+                                  selectedGroups.length === 0 ||
+                                  !captionSource.trim()
+                                    ? 0.6
+                                    : 1,
+                              }}
+                            >
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                              Open Telegram forward
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleOpenWhatsAppForward}
+                              disabled={
+                                selectedGroups.length === 0 ||
+                                !captionSource.trim()
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all"
+                              style={{
+                                borderColor: "var(--border)",
+                                background: "var(--bg-primary)",
+                                color: "var(--brand-dark)",
+                                opacity:
+                                  selectedGroups.length === 0 ||
+                                  !captionSource.trim()
+                                    ? 0.6
+                                    : 1,
+                              }}
+                            >
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                              Open WhatsApp forward
+                            </button>
+                          )}
                         </div>
                         <div className="space-y-2">
                           {availableGroups.map((group) => {

@@ -281,3 +281,24 @@ body {
 .eazee-wallet-details-compact .tw-connected-wallet__balance {
   display: none !important;
 }
+
+.eazee-wallet-connect-primary {
+  background: var(--brand-green) !important;
+  color: var(--brand-dark) !important;
+  border: 1px solid
+    color-mix(in oklab, var(--brand-green) 72%, var(--brand-dark) 28%) !important;
+  box-shadow: 0 8px 22px
+    color-mix(in oklab, var(--brand-green) 34%, transparent) !important;
+  transition: all 180ms ease !important;
+}
+
+.eazee-wallet-connect-primary:hover {
+  transform: translateY(-1px) !important;
+  filter: saturate(1.03) brightness(0.98) !important;
+}
+
+.eazee-wallet-connect-primary:disabled {
+  opacity: 0.6 !important;
+  transform: none !important;
+  filter: none !important;
+}

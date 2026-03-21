@@ -24,6 +24,9 @@ export function WalletConnectButton({
   const compactConnectButtonClass =
     "eazee-wallet-connect-compact !w-10 !h-10 !min-h-[40px] !max-w-[40px] !min-w-[40px] !rounded-full !p-0 !text-[10px] !overflow-hidden !justify-center";
 
+  const standardConnectButtonClass =
+    "eazee-wallet-connect-primary !w-full !min-h-[48px] !rounded-xl !px-4 !py-3 !text-sm !font-semibold !justify-center";
+
   const compactDetailsButtonClass =
     "eazee-wallet-details-compact !w-10 !h-10 !min-h-[40px] !max-w-[40px] !min-w-[40px] !rounded-full !p-0 !overflow-hidden !justify-center";
 
@@ -68,11 +71,13 @@ export function WalletConnectButton({
       appMetadata={{
         name: "Eazee",
         url: "https://eazee.app",
-        description: "AI WhatsApp marketing with Celo payments",
+        description: "AI social marketing with Celo payments",
       }}
       connectButton={{
         label: label || (compact ? "Connect" : "Connect Wallet"),
-        className: compact ? compactConnectButtonClass : undefined,
+        className: compact
+          ? compactConnectButtonClass
+          : standardConnectButtonClass,
       }}
       detailsButton={{
         className: compact ? compactDetailsButtonClass : undefined,

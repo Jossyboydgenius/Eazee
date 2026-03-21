@@ -8,7 +8,7 @@ import {
   thirdwebClientConfigState,
 } from "@/lib/celo";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
-import whatsappAiIcon from "@/svg/whatsapp-ai.svg";
+import appLogo from "@/images/logo.png";
 
 const PROTECTED_ROUTES = ["/compose", "/schedule", "/dashboard"];
 
@@ -42,22 +42,23 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       className="min-h-screen p-4 sm:p-6 flex items-center justify-center"
       style={{ background: "var(--bg-primary)" }}
     >
-      <div className="glass-card w-full max-w-md p-6 sm:p-7 text-center">
-        <div className="flex items-center justify-center gap-2.5">
+      <div className="glass-card w-full max-w-xl p-6 sm:p-7 text-center">
+        <div className="flex items-center justify-center mb-3">
           <Image
-            src={whatsappAiIcon}
+            src={appLogo}
             alt=""
-            width={34}
-            height={34}
-            className="w-8.5 h-8.5"
+            width={320}
+            height={92}
+            className="w-[122px] sm:w-[144px] h-[36px] sm:h-[40px] object-contain object-center"
           />
-          <h1
-            className="text-xl font-bold"
-            style={{ color: "var(--text-primary)" }}
-          >
-            Connect Wallet
-          </h1>
         </div>
+
+        <h1
+          className="text-2xl font-bold"
+          style={{ color: "var(--text-primary)" }}
+        >
+          Connect Wallet
+        </h1>
 
         <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
           {isThirdwebClientConfigured
@@ -65,7 +66,7 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
             : helperText}
         </p>
 
-        <div className="mt-5">
+        <div className="mt-6">
           <WalletConnectButton label="Connect Wallet" />
         </div>
 

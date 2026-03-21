@@ -1,0 +1,611 @@
+{
+  "events": [
+    {
+      "id": "tg-webhook-1774120833118-n3cn6",
+      "receivedAt": "2026-03-21T19:20:33.118Z",
+      "update": {
+        "updateId": "700001",
+        "updateType": "message",
+        "chatId": "@eazee_test",
+        "chatType": "channel",
+        "fromId": "123456",
+        "messageId": "11",
+        "text": "/start",
+        "command": "start",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 700001,
+        "message": {
+          "chat": {
+            "id": "@eazee_test",
+            "type": "channel"
+          },
+          "message_id": 11,
+          "text": "/start",
+          "from": {
+            "id": "123456"
+          }
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774120833597-5oxej",
+      "receivedAt": "2026-03-21T19:20:33.597Z",
+      "update": {
+        "updateId": "700002",
+        "updateType": "callback_query",
+        "chatId": "@eazee_test",
+        "chatType": "channel",
+        "fromId": "123456",
+        "messageId": "12",
+        "text": "menu",
+        "command": "",
+        "callbackQueryId": "fake-callback-id",
+        "callbackData": "nav:help"
+      },
+      "payload": {
+        "update_id": 700002,
+        "callback_query": {
+          "data": "nav:help",
+          "id": "fake-callback-id",
+          "message": {
+            "chat": {
+              "id": "@eazee_test",
+              "type": "channel"
+            },
+            "message_id": 12,
+            "text": "menu"
+          },
+          "from": {
+            "id": "123456"
+          }
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774120891201-pt3f2",
+      "receivedAt": "2026-03-21T19:21:31.201Z",
+      "update": {
+        "updateId": "700101",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "21",
+        "text": "/start",
+        "command": "start",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 700101,
+        "message": {
+          "chat": {
+            "id": "5288680583",
+            "type": "private"
+          },
+          "message_id": 21,
+          "text": "/start",
+          "from": {
+            "id": "5288680583"
+          }
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774120891617-ccftu",
+      "receivedAt": "2026-03-21T19:21:31.617Z",
+      "update": {
+        "updateId": "700102",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "22",
+        "text": "/help",
+        "command": "help",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 700102,
+        "message": {
+          "chat": {
+            "id": "5288680583",
+            "type": "private"
+          },
+          "message_id": 22,
+          "text": "/help",
+          "from": {
+            "id": "5288680583"
+          }
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774120957655-7lzgu",
+      "receivedAt": "2026-03-21T19:22:37.655Z",
+      "update": {
+        "updateId": "700201",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "31",
+        "text": "/start",
+        "command": "start",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 700201,
+        "message": {
+          "chat": {
+            "id": "5288680583",
+            "type": "private"
+          },
+          "message_id": 31,
+          "text": "/start",
+          "from": {
+            "id": "5288680583"
+          }
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774120958113-2n12e",
+      "receivedAt": "2026-03-21T19:22:38.113Z",
+      "update": {
+        "updateId": "700202",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "32",
+        "text": "/help",
+        "command": "help",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 700202,
+        "message": {
+          "chat": {
+            "id": "5288680583",
+            "type": "private"
+          },
+          "message_id": 32,
+          "text": "/help",
+          "from": {
+            "id": "5288680583"
+          }
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774121012253-56jvo",
+      "receivedAt": "2026-03-21T19:23:32.253Z",
+      "update": {
+        "updateId": "362741392",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "3",
+        "text": "/start",
+        "command": "start",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 362741392,
+        "message": {
+          "message_id": 3,
+          "from": {
+            "id": 5288680583,
+            "is_bot": false,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "language_code": "en"
+          },
+          "chat": {
+            "id": 5288680583,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "type": "private"
+          },
+          "date": 1774119966,
+          "text": "/start",
+          "entities": [
+            {
+              "offset": 0,
+              "length": 6,
+              "type": "bot_command"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774121012662-phy9a",
+      "receivedAt": "2026-03-21T19:23:32.662Z",
+      "update": {
+        "updateId": "362741393",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "4",
+        "text": "/start",
+        "command": "start",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 362741393,
+        "message": {
+          "message_id": 4,
+          "from": {
+            "id": 5288680583,
+            "is_bot": false,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "language_code": "en"
+          },
+          "chat": {
+            "id": 5288680583,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "type": "private"
+          },
+          "date": 1774119980,
+          "text": "/start",
+          "entities": [
+            {
+              "offset": 0,
+              "length": 6,
+              "type": "bot_command"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774121012833-huy2l",
+      "receivedAt": "2026-03-21T19:23:32.833Z",
+      "update": {
+        "updateId": "362741394",
+        "updateType": "message",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "5",
+        "text": "/dashboard",
+        "command": "dashboard",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 362741394,
+        "message": {
+          "message_id": 5,
+          "from": {
+            "id": 5288680583,
+            "is_bot": false,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "language_code": "en"
+          },
+          "chat": {
+            "id": 5288680583,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "type": "private"
+          },
+          "date": 1774119987,
+          "text": "/dashboard",
+          "entities": [
+            {
+              "offset": 0,
+              "length": 10,
+              "type": "bot_command"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774121053950-sv99p",
+      "receivedAt": "2026-03-21T19:24:13.950Z",
+      "update": {
+        "updateId": "362741395",
+        "updateType": "callback_query",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "6",
+        "text": "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.",
+        "command": "",
+        "callbackQueryId": "4267966071908240608",
+        "callbackData": "nav:create"
+      },
+      "payload": {
+        "update_id": 362741395,
+        "callback_query": {
+          "id": "4267966071908240608",
+          "from": {
+            "id": 5288680583,
+            "is_bot": false,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "language_code": "en"
+          },
+          "message": {
+            "message_id": 6,
+            "from": {
+              "id": 8287177356,
+              "is_bot": true,
+              "first_name": "Eazee",
+              "username": "eazee_dispatch_bot"
+            },
+            "chat": {
+              "id": 5288680583,
+              "first_name": "Rejubi",
+              "last_name": "Duke",
+              "username": "RejubiDuke",
+              "type": "private"
+            },
+            "date": 1774120958,
+            "text": "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.",
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "🧩 Create Post",
+                    "callback_data": "nav:create"
+                  },
+                  {
+                    "text": "📊 Dashboard",
+                    "callback_data": "nav:dashboard"
+                  }
+                ],
+                [
+                  {
+                    "text": "❓ Help",
+                    "callback_data": "nav:help"
+                  }
+                ]
+              ]
+            }
+          },
+          "chat_instance": "-8604378784637999877",
+          "data": "nav:create"
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774121055666-ipoo6",
+      "receivedAt": "2026-03-21T19:24:15.666Z",
+      "update": {
+        "updateId": "362741396",
+        "updateType": "callback_query",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "6",
+        "text": "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.",
+        "command": "",
+        "callbackQueryId": "4267966071541638700",
+        "callbackData": "nav:create"
+      },
+      "payload": {
+        "update_id": 362741396,
+        "callback_query": {
+          "id": "4267966071541638700",
+          "from": {
+            "id": 5288680583,
+            "is_bot": false,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "language_code": "en"
+          },
+          "message": {
+            "message_id": 6,
+            "from": {
+              "id": 8287177356,
+              "is_bot": true,
+              "first_name": "Eazee",
+              "username": "eazee_dispatch_bot"
+            },
+            "chat": {
+              "id": 5288680583,
+              "first_name": "Rejubi",
+              "last_name": "Duke",
+              "username": "RejubiDuke",
+              "type": "private"
+            },
+            "date": 1774120958,
+            "text": "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.",
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "🧩 Create Post",
+                    "callback_data": "nav:create"
+                  },
+                  {
+                    "text": "📊 Dashboard",
+                    "callback_data": "nav:dashboard"
+                  }
+                ],
+                [
+                  {
+                    "text": "❓ Help",
+                    "callback_data": "nav:help"
+                  }
+                ]
+              ]
+            }
+          },
+          "chat_instance": "-8604378784637999877",
+          "data": "nav:create"
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774121635706-z7cju",
+      "receivedAt": "2026-03-21T19:33:55.707Z",
+      "update": {
+        "updateId": "362741397",
+        "updateType": "message",
+        "chatId": "646892793",
+        "chatType": "private",
+        "fromId": "646892793",
+        "messageId": "14",
+        "text": "Hi",
+        "command": "",
+        "callbackQueryId": "",
+        "callbackData": ""
+      },
+      "payload": {
+        "update_id": 362741397,
+        "message": {
+          "message_id": 14,
+          "from": {
+            "id": 646892793,
+            "is_bot": false,
+            "first_name": "Awe",
+            "last_name": "Joseph Olaitan",
+            "username": "Tech_Apostle",
+            "language_code": "en"
+          },
+          "chat": {
+            "id": 646892793,
+            "first_name": "Awe",
+            "last_name": "Joseph Olaitan",
+            "username": "Tech_Apostle",
+            "type": "private"
+          },
+          "date": 1774121635,
+          "text": "Hi"
+        }
+      }
+    },
+    {
+      "id": "tg-webhook-1774122021840-nr52c",
+      "receivedAt": "2026-03-21T19:40:21.840Z",
+      "update": {
+        "updateId": "362741398",
+        "updateType": "callback_query",
+        "chatId": "5288680583",
+        "chatType": "private",
+        "fromId": "5288680583",
+        "messageId": "13",
+        "text": "🧩 Create flow\n1) Open the Eazee Mini App\n2) Go to Compose\n3) Add product details, generate caption, and schedule\n\nTip: use /dashboard to track posts and payments.",
+        "command": "",
+        "callbackQueryId": "4267966073243427583",
+        "callbackData": "nav:create"
+      },
+      "payload": {
+        "update_id": 362741398,
+        "callback_query": {
+          "id": "4267966073243427583",
+          "from": {
+            "id": 5288680583,
+            "is_bot": false,
+            "first_name": "Rejubi",
+            "last_name": "Duke",
+            "username": "RejubiDuke",
+            "language_code": "en"
+          },
+          "message": {
+            "message_id": 13,
+            "from": {
+              "id": 8287177356,
+              "is_bot": true,
+              "first_name": "Eazee",
+              "username": "eazee_dispatch_bot"
+            },
+            "chat": {
+              "id": 5288680583,
+              "first_name": "Rejubi",
+              "last_name": "Duke",
+              "username": "RejubiDuke",
+              "type": "private"
+            },
+            "date": 1774121056,
+            "text": "🧩 Create flow\n1) Open the Eazee Mini App\n2) Go to Compose\n3) Add product details, generate caption, and schedule\n\nTip: use /dashboard to track posts and payments.",
+            "entities": [
+              {
+                "offset": 124,
+                "length": 10,
+                "type": "bot_command"
+              }
+            ],
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "🧩 Create Post",
+                    "callback_data": "nav:create"
+                  },
+                  {
+                    "text": "📊 Dashboard",
+                    "callback_data": "nav:dashboard"
+                  }
+                ],
+                [
+                  {
+                    "text": "❓ Help",
+                    "callback_data": "nav:help"
+                  }
+                ]
+              ]
+            }
+          },
+          "chat_instance": "-8604378784637999877",
+          "data": "nav:create"
+        }
+      }
+    }
+  ],
+  "sessions": {
+    "646892793": {
+      "chatId": "646892793",
+      "updatedAt": "2026-03-21T19:33:55.710Z",
+      "interactionCount": 1,
+      "lastUpdateType": "message",
+      "lastCommand": "",
+      "lastCallbackData": "",
+      "lastText": "Hi"
+    },
+    "@eazee_test": {
+      "chatId": "@eazee_test",
+      "updatedAt": "2026-03-21T19:20:33.597Z",
+      "interactionCount": 2,
+      "lastUpdateType": "callback_query",
+      "lastCommand": "start",
+      "lastCallbackData": "nav:help",
+      "lastText": "menu"
+    },
+    "5288680583": {
+      "chatId": "5288680583",
+      "updatedAt": "2026-03-21T19:40:21.842Z",
+      "interactionCount": 10,
+      "lastUpdateType": "callback_query",
+      "lastCommand": "dashboard",
+      "lastCallbackData": "nav:create",
+      "lastText": "🧩 Create flow\n1) Open the Eazee Mini App\n2) Go to Compose\n3) Add product details, generate caption, and schedule\n\nTip: use /dashboard to track posts and payments."
+    }
+  }
+}

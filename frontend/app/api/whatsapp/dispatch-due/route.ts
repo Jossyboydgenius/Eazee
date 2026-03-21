@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sendWhatsAppMessageWithDeadlineFallback } from "@/lib/whatsappCloud";
+import { sendTelegramTextMessage } from "@/lib/telegramBot";
 import {
   getDueWhatsAppJobs,
   listWhatsAppJobs,
@@ -9,6 +10,19 @@ import {
 } from "@/lib/whatsappQueue";
 
 export const runtime = "nodejs";
+
+type MessagingProvider = "whatsapp" | "telegram";
+
+function getMessagingProvider(): MessagingProvider {
+  const configured =
+    process.env.EAZEE_MESSAGING_PROVIDER?.trim().toLowerCase() || "";
+
+  if (configured === "telegram") {
+    return "telegram";
+  }
+
+  return "whatsapp";
+}
 
 function isAuthorizedDispatchRequest(request: Request): boolean {
   const cronSecret = process.env.CRON_SECRET?.trim();
@@ -35,13 +49,16 @@ async function dispatchDueJobs(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const provider = getMessagingProvider();
+
   const dueJobs = getDueWhatsAppJobs();
 
   if (dueJobs.length === 0) {
     return NextResponse.json({
       success: true,
+      provider,
       dispatched: 0,
-      message: "No due WhatsApp jobs",
+      message: "No due queued jobs",
     });
   }
 
@@ -68,7 +85,7 @@ async function dispatchDueJobs(request: Request) {
       if (!target.recipient) {
         skipped += 1;
         errors.push(
-          `Target '${target.id}' has no mapped recipient phone number for Cloud API dispatch.`,
+          `Target '${target.id}' has no mapped recipient destination for dispatch.`,
         );
         continue;
       }
@@ -81,14 +98,21 @@ async function dispatchDueJobs(request: Request) {
         continue;
       }
 
-      const result = await sendWhatsAppMessageWithDeadlineFallback({
-        to: target.recipient,
-        body: job.caption,
-        fallbackTemplateName: job.templateName,
-        fallbackTemplateLanguageCode: job.templateLanguageCode,
-        fallbackTemplateBodyParameters: job.templateBodyParameters,
-        fallbackTemplateHeaderImageUrl: job.templateHeaderImageUrl,
-      });
+      const result =
+        provider === "telegram"
+          ? await sendTelegramTextMessage({
+              chatId: target.recipient,
+              text: job.caption,
+              disableLinkPreview: true,
+            })
+          : await sendWhatsAppMessageWithDeadlineFallback({
+              to: target.recipient,
+              body: job.caption,
+              fallbackTemplateName: job.templateName,
+              fallbackTemplateLanguageCode: job.templateLanguageCode,
+              fallbackTemplateBodyParameters: job.templateBodyParameters,
+              fallbackTemplateHeaderImageUrl: job.templateHeaderImageUrl,
+            });
 
       if (result.ok) {
         sent += 1;
@@ -124,6 +148,7 @@ async function dispatchDueJobs(request: Request) {
 
   return NextResponse.json({
     success: true,
+    provider,
     trigger: getTriggerSource(request),
     dispatched: dueJobs.length,
     results,
@@ -143,6 +168,7 @@ export async function GET(request: Request) {
   const due = getDueWhatsAppJobs();
 
   return NextResponse.json({
+    provider: getMessagingProvider(),
     count: queue.length,
     dueCount: due.length,
     queue,

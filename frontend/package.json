@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:wa-templates": "node scripts/test-whatsapp-templates.mjs",
+    "test:telegram": "node scripts/test-telegram-send.mjs",
+    "telegram:poll": "node scripts/telegram-long-polling.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.2",

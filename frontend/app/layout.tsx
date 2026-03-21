@@ -8,6 +8,11 @@ export const metadata: Metadata = {
   title: "Eazee — AI WhatsApp Marketing on Celo",
   description:
     "Upload products, generate AI captions, schedule posts, and accept cUSD payments via Celo blockchain — all from one dashboard.",
+  icons: {
+    icon: "/icon.png?v=2",
+    shortcut: "/icon.png?v=2",
+    apple: "/apple-icon.png?v=2",
+  },
   keywords: [
     "WhatsApp marketing",
     "AI caption generator",

@@ -20,7 +20,7 @@ import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import announcementMegaphoneIcon from "@/svg/announcement-megaphone.svg";
 import calendarIcon from "@/svg/calendar.svg";
 import storeIcon from "@/svg/store.svg";
-import whatsappAiIcon from "@/svg/whatsapp-ai.svg";
+import appLogo from "@/images/logo.png";
 
 interface NavItem {
   href: string;
@@ -73,20 +73,14 @@ export function Sidebar() {
         >
           <Menu className="w-5 h-5" style={{ color: "var(--text-primary)" }} />
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center">
           <Image
-            src={whatsappAiIcon}
+            src={appLogo}
             alt=""
-            width={28}
-            height={28}
-            className="w-7 h-7 shrink-0"
+            width={224}
+            height={64}
+            className="w-[94px] h-[28px] object-contain object-left shrink-0"
           />
-          <span
-            className="font-bold text-sm"
-            style={{ color: "var(--text-primary)" }}
-          >
-            Eazee
-          </span>
         </div>
         <button
           onClick={toggleTheme}
@@ -145,7 +139,7 @@ export function Sidebar() {
         className={cn(
           "hidden md:flex flex-col h-screen overflow-visible border-r transition-all duration-300 shrink-0 relative group z-30",
           collapsed
-            ? "w-16 cursor-pointer hover:bg-[var(--bg-elevated)]"
+            ? "w-[72px] cursor-pointer hover:bg-[var(--bg-elevated)]"
             : "w-64",
         )}
         style={{
@@ -223,29 +217,23 @@ function SidebarContent({
           <Link
             href="/compose"
             onClick={onNavClick}
-            className="flex items-center gap-2.5"
+            className="flex items-center"
           >
             <Image
-              src={whatsappAiIcon}
+              src={appLogo}
               alt=""
-              width={32}
-              height={32}
-              className="w-8 h-8 shrink-0"
+              width={288}
+              height={80}
+              className="w-[112px] h-[32px] object-contain object-left shrink-0"
             />
-            <p
-              className="font-bold text-sm leading-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              Eazee
-            </p>
           </Link>
         ) : (
           <Image
-            src={whatsappAiIcon}
+            src={appLogo}
             alt=""
-            width={32}
-            height={32}
-            className="w-8 h-8 shrink-0"
+            width={160}
+            height={48}
+            className="w-[44px] h-[30px] object-contain object-left shrink-0"
           />
         )}
 
