@@ -61,7 +61,7 @@ export function Sidebar() {
     <>
       {/* Mobile top bar */}
       <div
-        className="md:hidden fixed top-0 left-0 right-0 z-40 flex items-center px-4 py-3 border-b"
+        className="md:hidden fixed top-0 left-0 right-0 z-40 flex items-center px-4  border-b"
         style={{
           background: "var(--sidebar-bg)",
           borderColor: "var(--sidebar-border)",
@@ -208,7 +208,7 @@ function SidebarContent({
       {/* Logo container */}
       <div
         className={cn(
-          "flex items-center py-1 border-b",
+          "flex items-center border-b",
           collapsed ? "px-1 justify-center" : "px-5 justify-between",
         )}
         style={{ borderColor: "var(--sidebar-border)" }}
