@@ -30,7 +30,7 @@ const item = {
 const RETRYABLE_CAPTION_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_GENERATION_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = 25000;
-const AI_TYPING_INTERVAL_MS = 18;
+const AI_TYPING_INTERVAL_MS = 10;
 
 type PremiumRouteState =
   | "idle"
@@ -164,7 +164,7 @@ export default function ComposePage() {
         window.clearInterval(captionTypingIntervalRef.current);
       }
 
-      const step = caption.length > 360 ? 6 : caption.length > 240 ? 4 : 2;
+      const step = caption.length > 360 ? 10 : caption.length > 240 ? 7 : 4;
       let cursor = 0;
       setCaptionDraft("");
 

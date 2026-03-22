@@ -163,8 +163,10 @@ export async function enqueueWhatsAppJob(
   }
 
   const jobId = createJobId();
+  const scheduledForDate = new Date(input.scheduledFor);
+  const nowDate = new Date(now);
 
-  await prisma.dispatchJob.create({
+  const created = await prisma.dispatchJob.create({
     data: {
       id: jobId,
       caption: input.caption,
@@ -182,11 +184,11 @@ export async function enqueueWhatsAppJob(
       waAccount: input.waAccount,
       sendTime: input.sendTime,
       repeatValue: input.repeat,
-      scheduledFor: new Date(input.scheduledFor),
+      scheduledFor: scheduledForDate,
       targets: (input.targets || []) as unknown as Prisma.InputJsonValue,
       status: "queued",
-      createdAt: new Date(now),
-      updatedAt: new Date(now),
+      createdAt: nowDate,
+      updatedAt: nowDate,
       attemptCount: 0,
       lastError: null,
       messageIds: [],
@@ -194,9 +196,42 @@ export async function enqueueWhatsAppJob(
       ownerWalletAddress: input.ownerWalletAddress || null,
       idempotencyKey: idempotencyKey || null,
     },
+    select: {
+      id: true,
+      ownerChatId: true,
+      ownerWalletAddress: true,
+    },
   });
 
-  return (await getJobById(jobId))!;
+  return {
+    id: created.id,
+    caption: input.caption,
+    templateName: input.templateName,
+    templateLanguageCode: input.templateLanguageCode,
+    templateBodyParameters: input.templateBodyParameters || [],
+    templateHeaderImageUrl: input.templateHeaderImageUrl,
+    postType: input.postType,
+    brief: input.brief,
+    tone: input.tone,
+    photos: input.photos || [],
+    hasCeloPayment: input.hasCeloPayment,
+    price: input.price,
+    currency: input.currency,
+    waAccount: input.waAccount,
+    sendTime: input.sendTime,
+    repeat: input.repeat,
+    scheduledFor: scheduledForDate.toISOString(),
+    targets: input.targets || [],
+    status: "queued",
+    createdAt: nowDate.toISOString(),
+    updatedAt: nowDate.toISOString(),
+    attemptCount: 0,
+    lastError: undefined,
+    messageIds: [],
+    ownerChatId: created.ownerChatId || undefined,
+    ownerWalletAddress: created.ownerWalletAddress || undefined,
+    idempotencyKey: idempotencyKey || undefined,
+  };
 }
 
 export async function listWhatsAppJobs(): Promise<WhatsAppDispatchJob[]> {

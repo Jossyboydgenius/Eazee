@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useActiveAccount } from "thirdweb/react";
-import { ArrowUpRight, Copy, Send, Settings } from "lucide-react";
+import { ArrowUpRight, Copy, RefreshCw, Send, Settings } from "lucide-react";
 import {
   isTelegramNumericDestination,
   normalizeTelegramDestination,
@@ -532,6 +532,9 @@ export default function TelegramLinkPanel({
                 borderColor: "var(--border)",
               }}
             >
+              <RefreshCw
+                className={`w-4 h-4 ${isLoadingStatus ? "animate-spin" : ""}`}
+              />
               {isLoadingStatus ? "Refreshing..." : "Refresh Status"}
             </button>
 

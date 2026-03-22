@@ -19,10 +19,7 @@ export function isValidTelegramDestination(value: string): boolean {
     return false;
   }
 
-  return (
-    isTelegramUsernameDestination(normalized) ||
-    isTelegramNumericDestination(normalized)
-  );
+  return isTelegramNumericDestination(normalized);
 }
 
 export function parseAllowedTelegramDestinations(raw: string): Set<string> {

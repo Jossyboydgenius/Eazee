@@ -98,7 +98,7 @@ export async function sendTelegramTextMessage(
       status: 400,
       mode: "mock",
       error:
-        "Invalid Telegram destination. Use numeric chat_id (example: -1001234567890) or @username.",
+        "Invalid Telegram destination. Use numeric chat_id only (example: -1001234567890).",
       data: null,
     };
   }

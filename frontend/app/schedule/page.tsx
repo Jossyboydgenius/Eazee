@@ -313,6 +313,18 @@ function normalizeTelegramRecipient(value: string): string {
   return normalizeTelegramDestination(value);
 }
 
+function sanitizeTelegramChatIdInput(value: string): string {
+  const compact = String(value || "").replace(/\s+/g, "");
+  const hasNegativePrefix = compact.startsWith("-");
+  const digits = compact.replace(/\D/g, "");
+
+  if (!digits) {
+    return hasNegativePrefix ? "-" : "";
+  }
+
+  return hasNegativePrefix ? `-${digits}` : digits;
+}
+
 function normalizeRecipientForProvider(
   value: string,
   provider: MessagingProvider,
@@ -1002,13 +1014,13 @@ export default function SchedulePage() {
     if (!formattedNumber) {
       setNewAccountNumberError(
         isTelegramProvider
-          ? "Enter a valid Telegram chat id (e.g. -100... or @channelusername)."
+          ? "Enter a valid numeric Telegram ID (e.g. -1001234567890)."
           : "Enter a valid WhatsApp number (digits only).",
       );
       toast({
         title: `Invalid ${platformLabel} destination`,
         description: isTelegramProvider
-          ? "Use a numeric chat id (example: -1001234567890) or @username."
+          ? "Use a numeric Telegram ID only (example: -1001234567890)."
           : "Use a valid local or international number.",
         variant: "error",
       });
@@ -1774,8 +1786,8 @@ export default function SchedulePage() {
                 className="mt-2 text-[11px]"
                 style={{ color: "var(--text-muted)" }}
               >
-                Accepted destinations: numeric chat id (example: -1001234567890)
-                or @username.
+                Accepted destination: numeric Telegram ID (example:
+                -1001234567890).
               </p>
             )}
 
@@ -1865,7 +1877,7 @@ export default function SchedulePage() {
                                 const inputValue = event.target.value;
                                 setNewAccountNumber(
                                   isTelegramProvider
-                                    ? inputValue.replace(/\s+/g, "")
+                                    ? sanitizeTelegramChatIdInput(inputValue)
                                     : inputValue.replace(/\D/g, ""),
                                 );
                                 if (newAccountNumberError) {
@@ -1879,20 +1891,20 @@ export default function SchedulePage() {
                                 ) {
                                   setNewAccountNumberError(
                                     isTelegramProvider
-                                      ? "Enter a valid Telegram chat id (e.g. -100... or @channelusername)."
+                                      ? "Enter a valid numeric Telegram ID (e.g. -1001234567890)."
                                       : "Enter a valid WhatsApp number (digits only).",
                                   );
                                 }
                               }}
                               inputMode={
-                                isTelegramProvider ? "text" : "numeric"
+                                isTelegramProvider ? "numeric" : "numeric"
                               }
                               pattern={
-                                isTelegramProvider ? undefined : "[0-9]*"
+                                isTelegramProvider ? "-?[0-9]*" : "[0-9]*"
                               }
                               placeholder={
                                 isTelegramProvider
-                                  ? "Telegram chat id (e.g. -1001234567890 or @channelusername)"
+                                  ? "Enter your Telegram ID"
                                   : "WhatsApp number (include country code)"
                               }
                               className="input-base"
