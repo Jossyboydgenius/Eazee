@@ -19,6 +19,8 @@ Options:
   --token=<token>             Telegram bot token override
   --webhook-url=<url>         Local webhook URL (default: http://localhost:3000/api/telegram/webhook)
   --secret=<secret>           Optional webhook secret header override
+  --keep-webhook              Keep webhook enabled (not recommended for local polling)
+  --drop-pending              Drop pending updates when disabling webhook
   --timeout=<seconds>         Telegram getUpdates timeout, default 25
   --help                      Show this help
 `);
@@ -29,6 +31,8 @@ function parseArgs(argv) {
     token: "",
     webhookUrl: "",
     secret: "",
+    keepWebhook: false,
+    dropPending: false,
     timeoutSeconds: 25,
     help: false,
   };
@@ -51,6 +55,16 @@ function parseArgs(argv) {
 
     if (arg.startsWith("--secret=")) {
       args.secret = arg.slice("--secret=".length).trim();
+      continue;
+    }
+
+    if (arg === "--keep-webhook") {
+      args.keepWebhook = true;
+      continue;
+    }
+
+    if (arg === "--drop-pending") {
+      args.dropPending = true;
       continue;
     }
 
@@ -92,6 +106,26 @@ function parseEnv(rawContent) {
   return env;
 }
 
+function isTruthy(value, fallback = false) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
 function loadLocalEnv(filePath) {
   if (!fs.existsSync(filePath)) {
     return {};
@@ -99,6 +133,79 @@ function loadLocalEnv(filePath) {
 
   const raw = fs.readFileSync(filePath, "utf8");
   return parseEnv(raw);
+}
+
+function getPollingLockFilePath() {
+  return path.join(projectRoot, ".data", "telegram-polling.lock");
+}
+
+function isProcessRunning(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "EPERM") {
+      return true;
+    }
+
+    return false;
+  }
+}
+
+function createPollingLock(lockFilePath) {
+  const fd = fs.openSync(lockFilePath, "wx");
+  fs.writeFileSync(fd, `${process.pid}\n`, "utf8");
+  fs.closeSync(fd);
+
+  return {
+    lockFilePath,
+    release() {
+      try {
+        fs.unlinkSync(lockFilePath);
+      } catch {
+        // no-op
+      }
+    },
+  };
+}
+
+function acquirePollingLock() {
+  const lockFilePath = getPollingLockFilePath();
+  fs.mkdirSync(path.dirname(lockFilePath), { recursive: true });
+
+  try {
+    return createPollingLock(lockFilePath);
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "EEXIST") {
+      let existingPid = "unknown";
+      try {
+        existingPid = fs.readFileSync(lockFilePath, "utf8").trim() || "unknown";
+      } catch {
+        // no-op
+      }
+
+      const parsedPid = Number(existingPid);
+      if (Number.isFinite(parsedPid) && !isProcessRunning(parsedPid)) {
+        try {
+          fs.unlinkSync(lockFilePath);
+          return createPollingLock(lockFilePath);
+        } catch {
+          // fall through to error below
+        }
+      }
+
+      console.error(
+        `Another telegram:poll process appears to be running (pid ${existingPid}). Reusing existing poller.`,
+      );
+      process.exit(0);
+    }
+
+    throw error;
+  }
 }
 
 function sleep(ms) {
@@ -161,6 +268,63 @@ async function fetchUpdates({ token, offset, timeoutSeconds }) {
   };
 }
 
+async function getWebhookInfo({ token }) {
+  const endpoint = `https://api.telegram.org/bot${token}/getWebhookInfo`;
+  const response = await fetch(endpoint, { method: "GET" });
+  const data = await safeJson(response);
+
+  if (!response.ok || data?.ok !== true || typeof data?.result !== "object") {
+    return {
+      ok: false,
+      status: response.status,
+      url: "",
+      error:
+        typeof data?.description === "string"
+          ? data.description
+          : "Failed to read webhook info",
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    url: typeof data.result.url === "string" ? data.result.url.trim() : "",
+    error: "",
+  };
+}
+
+async function deleteWebhook({ token, dropPending }) {
+  const endpoint = new URL(
+    `https://api.telegram.org/bot${token}/deleteWebhook`,
+  );
+  endpoint.searchParams.set(
+    "drop_pending_updates",
+    dropPending ? "true" : "false",
+  );
+
+  const response = await fetch(endpoint.toString(), {
+    method: "POST",
+  });
+
+  const data = await safeJson(response);
+  if (!response.ok || data?.ok !== true) {
+    return {
+      ok: false,
+      status: response.status,
+      error:
+        typeof data?.description === "string"
+          ? data.description
+          : "Failed to delete webhook",
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    error: "",
+  };
+}
+
 async function forwardUpdateToWebhook({ update, webhookUrl, secret }) {
   const headers = {
     "Content-Type": "application/json",
@@ -206,6 +370,14 @@ async function main() {
     process.env.TELEGRAM_WEBHOOK_SECRET ||
     localEnv.TELEGRAM_WEBHOOK_SECRET ||
     "";
+  const shouldKeepWebhook =
+    args.keepWebhook ||
+    isTruthy(process.env.TELEGRAM_POLLING_KEEP_WEBHOOK, false) ||
+    isTruthy(localEnv.TELEGRAM_POLLING_KEEP_WEBHOOK, false);
+  const shouldDropPending =
+    args.dropPending ||
+    isTruthy(process.env.TELEGRAM_POLLING_DROP_PENDING_UPDATES, false) ||
+    isTruthy(localEnv.TELEGRAM_POLLING_DROP_PENDING_UPDATES, false);
 
   if (!token) {
     console.error(
@@ -219,9 +391,63 @@ async function main() {
     process.exit(1);
   }
 
+  const lock = acquirePollingLock();
+  const cleanups = [lock.release];
+  const runCleanup = () => {
+    while (cleanups.length > 0) {
+      const cleanup = cleanups.pop();
+      try {
+        cleanup?.();
+      } catch {
+        // no-op
+      }
+    }
+  };
+
+  process.on("SIGINT", () => {
+    runCleanup();
+    process.exit(0);
+  });
+
+  process.on("SIGTERM", () => {
+    runCleanup();
+    process.exit(0);
+  });
+
+  process.on("exit", () => {
+    runCleanup();
+  });
+
   console.log("Starting Telegram long polling...");
   console.log(`Webhook target: ${webhookUrl}`);
   console.log(`Timeout seconds: ${args.timeoutSeconds}`);
+
+  const webhookInfo = await getWebhookInfo({ token });
+  if (!webhookInfo.ok) {
+    console.warn(
+      `Could not read webhook status (${webhookInfo.status}): ${webhookInfo.error}`,
+    );
+  } else if (webhookInfo.url && !shouldKeepWebhook) {
+    console.log(`Webhook currently set to: ${webhookInfo.url}`);
+    console.log("Disabling webhook so getUpdates can work locally...");
+    const webhookDelete = await deleteWebhook({
+      token,
+      dropPending: shouldDropPending,
+    });
+
+    if (!webhookDelete.ok) {
+      console.error(
+        `Failed to disable webhook (${webhookDelete.status}): ${webhookDelete.error}`,
+      );
+      process.exit(1);
+    }
+
+    console.log("Webhook disabled for local polling.");
+  } else if (webhookInfo.url && shouldKeepWebhook) {
+    console.warn(
+      "Webhook remains enabled; Telegram getUpdates may fail while webhook is active.",
+    );
+  }
 
   let offset = 0;
 
@@ -268,6 +494,31 @@ async function main() {
         console.log(
           `Forwarded update ${String(updateId)} -> webhook (${webhookResult.status})`,
         );
+
+        if (webhookResult.data && typeof webhookResult.data === "object") {
+          const webhookData = webhookResult.data;
+          const handledAction =
+            typeof webhookData.handledAction === "string"
+              ? webhookData.handledAction
+              : "(none)";
+          const commandHandled =
+            typeof webhookData.commandHandled === "boolean"
+              ? String(webhookData.commandHandled)
+              : "(unknown)";
+          const replyMode =
+            typeof webhookData.replyMode === "string"
+              ? webhookData.replyMode
+              : "(unknown)";
+          const replyError =
+            typeof webhookData.replyError === "string" &&
+            webhookData.replyError.trim()
+              ? webhookData.replyError.trim()
+              : "(none)";
+
+          console.log(
+            `Webhook handled update ${String(updateId)}: action=${handledAction}, commandHandled=${commandHandled}, replyMode=${replyMode}, replyError=${replyError}`,
+          );
+        }
       }
     } catch (error) {
       console.error(
