@@ -79,7 +79,7 @@ export function Sidebar() {
             alt=""
             width={224}
             height={64}
-            className="w-[94px] h-[28px] object-contain object-left shrink-0"
+            className="w-[100px] h-auto object-contain object-left shrink-0"
           />
         </div>
         <button
@@ -208,8 +208,8 @@ function SidebarContent({
       {/* Logo container */}
       <div
         className={cn(
-          "flex items-center py-5 border-b",
-          collapsed ? "px-4 justify-center" : "px-5 justify-between",
+          "flex items-center py-1 border-b",
+          collapsed ? "px-1 justify-center" : "px-5 justify-between",
         )}
         style={{ borderColor: "var(--sidebar-border)" }}
       >
@@ -224,7 +224,7 @@ function SidebarContent({
               alt=""
               width={288}
               height={80}
-              className="w-[112px] h-[32px] object-contain object-left shrink-0"
+              className="w-[116px] h-auto object-contain object-left shrink-0"
             />
           </Link>
         ) : (
@@ -233,7 +233,7 @@ function SidebarContent({
             alt=""
             width={160}
             height={48}
-            className="w-[44px] h-[30px] object-contain object-left shrink-0"
+            className="w-[56px] h-auto object-contain object-left shrink-0"
           />
         )}
 
