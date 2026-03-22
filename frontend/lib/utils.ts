@@ -69,19 +69,25 @@ export const STABLECOINS = [
   {
     symbol: "cUSD",
     name: "Celo Dollar",
-    address: "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1",
+    address:
+      process.env.NEXT_PUBLIC_CUSD_ADDRESS?.trim() ||
+      "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1",
     icon: "💵",
   },
   {
     symbol: "cEUR",
     name: "Celo Euro",
-    address: "0x10c892A6EC43a53E45D0B916B4b7D383B1b78d0F",
+    address:
+      process.env.NEXT_PUBLIC_CEUR_ADDRESS?.trim() ||
+      "0x10c892A6EC43a53E45D0B916B4b7D383B1b78d0F",
     icon: "💶",
   },
   {
     symbol: "cREAL",
     name: "Celo Brazilian Real",
-    address: "0xE4D517785D091D3c54818832dB6094bcc2744545",
+    address:
+      process.env.NEXT_PUBLIC_CREAL_ADDRESS?.trim() ||
+      "0xE4D517785D091D3c54818832dB6094bcc2744545",
     icon: "🇧🇷",
   },
 ];
