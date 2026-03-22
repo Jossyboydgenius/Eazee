@@ -102,6 +102,7 @@ interface EazeeStore {
   startEditingPost: (id: string) => void;
   clearEditingPost: () => void;
   addTransaction: (tx: CeloTransaction) => void;
+  setTransactions: (transactions: CeloTransaction[]) => void;
   resetCompose: () => void;
 }
 
@@ -408,6 +409,7 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
   clearEditingPost: () => set({ editingPostId: null }),
   addTransaction: (tx) =>
     set((s) => ({ transactions: [tx, ...s.transactions] })),
+  setTransactions: (transactions) => set({ transactions }),
   resetCompose: () =>
     set((s) => {
       persistPhotosForAccount(s.selectedAccount, []);
