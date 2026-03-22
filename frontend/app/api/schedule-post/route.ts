@@ -4,10 +4,15 @@ import {
   listWhatsAppJobs,
   type WhatsAppDispatchTarget,
 } from "@/lib/whatsappQueue";
+import { getTelegramBindingByChatId } from "@/lib/telegramIdentity";
+import { getWalletSessionFromRequest } from "@/lib/walletAuth";
+
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    const walletSession = await getWalletSessionFromRequest(request);
     const {
       caption,
       templateName,
@@ -27,6 +32,9 @@ export async function POST(request: Request) {
       targets,
       groups,
       targetRecipients,
+      ownerChatId,
+      ownerWalletAddress,
+      idempotencyKey,
     } = body;
 
     if (!caption || !waAccount || !sendTime || !targets?.length) {
@@ -42,9 +50,52 @@ export async function POST(request: Request) {
       targetRecipients,
     );
 
+    const normalizedOwnerChatId =
+      typeof ownerChatId === "string" ? ownerChatId.trim() : "";
+    const normalizedOwnerWalletAddress =
+      typeof ownerWalletAddress === "string"
+        ? ownerWalletAddress.trim().toLowerCase()
+        : "";
+    const binding = normalizedOwnerChatId
+      ? await getTelegramBindingByChatId(normalizedOwnerChatId)
+      : null;
+    if (
+      walletSession &&
+      normalizedOwnerWalletAddress &&
+      normalizedOwnerWalletAddress !== walletSession.walletAddress
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "ownerWalletAddress does not match authenticated wallet session",
+        },
+        { status: 403 },
+      );
+    }
+
+    if (
+      walletSession &&
+      binding?.walletAddress &&
+      binding.walletAddress !== walletSession.walletAddress
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Authenticated wallet session does not match Telegram chat binding wallet",
+        },
+        { status: 403 },
+      );
+    }
+
+    const resolvedOwnerWalletAddress =
+      normalizedOwnerWalletAddress ||
+      walletSession?.walletAddress ||
+      binding?.walletAddress ||
+      "";
+
     const scheduledFor = buildScheduledDate(sendTime);
 
-    const job = enqueueWhatsAppJob({
+    const job = await enqueueWhatsAppJob({
       caption,
       templateName:
         typeof templateName === "string" ? templateName.trim() : undefined,
@@ -73,6 +124,10 @@ export async function POST(request: Request) {
       repeat: String(repeat || "one-time"),
       targets: normalizedTargets,
       scheduledFor,
+      ownerChatId: normalizedOwnerChatId || undefined,
+      ownerWalletAddress: resolvedOwnerWalletAddress || undefined,
+      idempotencyKey:
+        typeof idempotencyKey === "string" ? idempotencyKey.trim() : undefined,
     });
 
     console.log(`✅ Scheduled job ${job.id} for ${job.scheduledFor}`);
@@ -81,6 +136,8 @@ export async function POST(request: Request) {
       success: true,
       jobId: job.id,
       scheduledFor: job.scheduledFor,
+      ownerChatId: job.ownerChatId || null,
+      ownerWalletAddress: job.ownerWalletAddress || null,
       queuedTargets: normalizedTargets.length,
       message: `Post scheduled for ${sendTime} (${repeat})`,
     });
@@ -94,7 +151,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  const queue = listWhatsAppJobs();
+  const queue = await listWhatsAppJobs();
   return NextResponse.json({ queue, count: queue.length });
 }
 

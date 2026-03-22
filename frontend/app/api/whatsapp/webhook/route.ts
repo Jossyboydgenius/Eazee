@@ -41,7 +41,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
-    const event = recordWebhookEvent(payload);
+    const event = await recordWebhookEvent(payload);
     const summary = summarizeWebhookPayload(payload);
 
     return NextResponse.json({

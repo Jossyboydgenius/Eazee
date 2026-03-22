@@ -7,6 +7,7 @@ import {
   markJobFailed,
   markJobProcessing,
   markJobSent,
+  recordDispatchReceipt,
 } from "@/lib/whatsappQueue";
 
 export const runtime = "nodejs";
@@ -51,7 +52,7 @@ async function dispatchDueJobs(request: Request) {
 
   const provider = getMessagingProvider();
 
-  const dueJobs = getDueWhatsAppJobs();
+  const dueJobs = await getDueWhatsAppJobs();
 
   if (dueJobs.length === 0) {
     return NextResponse.json({
@@ -64,6 +65,8 @@ async function dispatchDueJobs(request: Request) {
 
   const results: Array<{
     jobId: string;
+    finalStatus?: string;
+    attemptCount?: number;
     sent: number;
     failed: number;
     skipped: number;
@@ -72,7 +75,7 @@ async function dispatchDueJobs(request: Request) {
   }> = [];
 
   for (const job of dueJobs) {
-    markJobProcessing(job.id);
+    await markJobProcessing(job.id);
 
     const messageIds: string[] = [];
     const errors: string[] = [];
@@ -84,17 +87,30 @@ async function dispatchDueJobs(request: Request) {
     for (const target of job.targets) {
       if (!target.recipient) {
         skipped += 1;
-        errors.push(
-          `Target '${target.id}' has no mapped recipient destination for dispatch.`,
-        );
+        const skippedMessage = `Target '${target.id}' has no mapped recipient destination for dispatch.`;
+        errors.push(skippedMessage);
+        await recordDispatchReceipt({
+          jobId: job.id,
+          provider,
+          targetId: target.id,
+          status: "skipped",
+          error: skippedMessage,
+        });
         continue;
       }
 
       if (dispatchedRecipients.has(target.recipient)) {
         skipped += 1;
-        errors.push(
-          `Target '${target.id}' shares recipient '${target.recipient}' with an already-dispatched target. Skipped duplicate send.`,
-        );
+        const duplicateMessage = `Target '${target.id}' shares recipient '${target.recipient}' with an already-dispatched target. Skipped duplicate send.`;
+        errors.push(duplicateMessage);
+        await recordDispatchReceipt({
+          jobId: job.id,
+          provider,
+          targetId: target.id,
+          recipient: target.recipient,
+          status: "skipped",
+          error: duplicateMessage,
+        });
         continue;
       }
 
@@ -117,27 +133,49 @@ async function dispatchDueJobs(request: Request) {
       if (result.ok) {
         sent += 1;
         dispatchedRecipients.add(target.recipient);
+        await recordDispatchReceipt({
+          jobId: job.id,
+          provider,
+          targetId: target.id,
+          recipient: target.recipient,
+          status: "sent",
+          messageId: result.messageId,
+        });
         if (result.messageId) {
           messageIds.push(result.messageId);
         }
       } else {
         failed += 1;
-        errors.push(result.error || `Send failed for target '${target.id}'`);
+        const failureMessage =
+          result.error || `Send failed for target '${target.id}'`;
+        errors.push(failureMessage);
+        await recordDispatchReceipt({
+          jobId: job.id,
+          provider,
+          targetId: target.id,
+          recipient: target.recipient,
+          status: "failed",
+          error: failureMessage,
+        });
       }
     }
 
+    let finalJob = undefined;
+
     if (sent > 0 && failed === 0) {
-      markJobSent(job.id, messageIds);
+      finalJob = await markJobSent(job.id, messageIds);
     } else {
       const reason =
         errors.length > 0
           ? errors.join(" | ")
           : "Dispatch failed with no successful sends";
-      markJobFailed(job.id, reason);
+      finalJob = await markJobFailed(job.id, reason);
     }
 
     results.push({
       jobId: job.id,
+      finalStatus: finalJob?.status,
+      attemptCount: finalJob?.attemptCount,
       sent,
       failed,
       skipped,
@@ -164,8 +202,8 @@ export async function GET(request: Request) {
     return dispatchDueJobs(request);
   }
 
-  const queue = listWhatsAppJobs();
-  const due = getDueWhatsAppJobs();
+  const queue = await listWhatsAppJobs();
+  const due = await getDueWhatsAppJobs();
 
   return NextResponse.json({
     provider: getMessagingProvider(),

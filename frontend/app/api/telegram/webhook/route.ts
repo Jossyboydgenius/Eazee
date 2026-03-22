@@ -13,6 +13,15 @@ import {
   recordTelegramWebhookEvent,
   touchTelegramSession,
 } from "@/lib/telegramWebhook";
+import {
+  confirmTelegramBindingToken,
+  getTelegramBindingByChatId,
+} from "@/lib/telegramIdentity";
+import {
+  listDispatchReceiptsByOwner,
+  listWhatsAppJobsByOwner,
+} from "@/lib/whatsappQueue";
+import { listPaymentsByOwner } from "@/lib/payments";
 
 export const runtime = "nodejs";
 
@@ -24,6 +33,8 @@ const telegramMiniAppUrl =
   "";
 
 type CommandName = "start" | "create" | "dashboard" | "help" | "status";
+
+const EXTRA_SUPPORTED_COMMANDS = ["/link <token>"];
 
 const SUPPORTED_COMMANDS: CommandName[] = [
   "start",
@@ -61,10 +72,17 @@ function isValidHttpsUrl(value: string): boolean {
 }
 
 function createMainMenuKeyboard(): TelegramInlineKeyboardMarkup {
+  const createPostUrl = buildMiniAppUrl("/compose");
+  const dashboardUrl = buildMiniAppUrl("/dashboard");
+
   const inlineKeyboard: TelegramInlineKeyboardMarkup["inline_keyboard"] = [
     [
-      { text: "🧩 Create Post", callback_data: "nav:create" },
-      { text: "📊 Dashboard", callback_data: "nav:dashboard" },
+      createPostUrl
+        ? { text: "🧩 Create Post", web_app: { url: createPostUrl } }
+        : { text: "🧩 Create Post", callback_data: "nav:create" },
+      dashboardUrl
+        ? { text: "📊 Dashboard", web_app: { url: dashboardUrl } }
+        : { text: "📊 Dashboard", callback_data: "nav:dashboard" },
     ],
     [{ text: "❓ Help", callback_data: "nav:help" }],
   ];
@@ -88,11 +106,12 @@ function createDashboardKeyboard(): TelegramInlineKeyboardMarkup {
     [{ text: "⬅️ Back to Menu", callback_data: "nav:start" }],
   ];
 
-  if (isValidHttpsUrl(telegramMiniAppUrl)) {
+  const dashboardUrl = buildMiniAppUrl("/dashboard");
+  if (dashboardUrl) {
     inlineKeyboard.unshift([
       {
         text: "📈 Open Dashboard",
-        web_app: { url: telegramMiniAppUrl },
+        web_app: { url: dashboardUrl },
       },
     ]);
   }
@@ -113,6 +132,123 @@ function getCommandFromCallbackData(callbackData: string): CommandName | null {
   return null;
 }
 
+function buildMiniAppUrl(pathname = "/"): string | null {
+  if (!isValidHttpsUrl(telegramMiniAppUrl)) {
+    return null;
+  }
+
+  try {
+    const baseUrl = new URL(telegramMiniAppUrl);
+    const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
+    return new URL(path, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function formatTxHash(txHash: string): string {
+  const value = String(txHash || "").trim();
+  if (!value) {
+    return "-";
+  }
+
+  if (value.length <= 14) {
+    return value;
+  }
+
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+async function buildDashboardSummaryText(chatId: string): Promise<string> {
+  const binding = await getTelegramBindingByChatId(chatId);
+  if (!binding?.walletAddress) {
+    return [
+      "📊 Dashboard",
+      "Link your wallet first to view schedules, payments, and transactions.",
+      "",
+      "Steps:",
+      "1) From Eazee app, request Telegram bind token",
+      "2) Run /link <token> in this chat",
+      "3) Run /dashboard again",
+    ].join("\n");
+  }
+
+  const [jobs, receipts, payments] = await Promise.all([
+    listWhatsAppJobsByOwner({
+      chatId,
+      walletAddress: binding.walletAddress,
+      limit: 5,
+    }),
+    listDispatchReceiptsByOwner({
+      chatId,
+      walletAddress: binding.walletAddress,
+      limit: 5,
+    }),
+    listPaymentsByOwner({
+      ownerWalletAddress: binding.walletAddress,
+      limit: 5,
+    }),
+  ]);
+
+  const statusSummary = jobs.reduce(
+    (accumulator, job) => {
+      if (job.status === "queued") accumulator.queued += 1;
+      if (job.status === "processing") accumulator.processing += 1;
+      if (job.status === "sent") accumulator.sent += 1;
+      if (job.status === "failed") accumulator.failed += 1;
+      return accumulator;
+    },
+    { queued: 0, processing: 0, sent: 0, failed: 0 },
+  );
+
+  const recentScheduleLines = jobs.slice(0, 3).map((job, index) => {
+    const scheduleTime = new Date(job.scheduledFor).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    return `${index + 1}. ${job.postType || "post"} • ${job.status} • ${scheduleTime}`;
+  });
+
+  const recentPaymentLines = payments.slice(0, 3).map((payment, index) => {
+    return `${index + 1}. ${payment.amount} ${payment.currency} • ${payment.productName || "payment"} • ${formatTxHash(payment.txHash)}`;
+  });
+
+  const receiptSentCount = receipts.filter(
+    (receipt) => receipt.status === "sent",
+  ).length;
+  const receiptFailedCount = receipts.filter(
+    (receipt) => receipt.status === "failed",
+  ).length;
+
+  return [
+    "📊 Dashboard summary",
+    `Wallet: ${binding.walletAddress}`,
+    "",
+    "Schedules:",
+    `- Queued: ${statusSummary.queued}`,
+    `- Processing: ${statusSummary.processing}`,
+    `- Sent: ${statusSummary.sent}`,
+    `- Failed: ${statusSummary.failed}`,
+    ...(recentScheduleLines.length > 0
+      ? ["Recent schedules:", ...recentScheduleLines]
+      : ["Recent schedules: none yet"]),
+    "",
+    "Payments:",
+    `- Recent records: ${payments.length}`,
+    ...(recentPaymentLines.length > 0
+      ? ["Recent transactions:", ...recentPaymentLines]
+      : ["Recent transactions: none yet"]),
+    "",
+    "Delivery receipts:",
+    `- Sent: ${receiptSentCount}`,
+    `- Failed: ${receiptFailedCount}`,
+    "",
+    "Use the Dashboard button to open full details in mini app.",
+  ].join("\n");
+}
+
 function isAuthorizedWebhookRequest(request: Request): boolean {
   if (!telegramWebhookSecret) {
     return true;
@@ -122,6 +258,28 @@ function isAuthorizedWebhookRequest(request: Request): boolean {
     request.headers.get("x-telegram-bot-api-secret-token")?.trim() || "";
 
   return requestSecret === telegramWebhookSecret;
+}
+
+function extractLinkTokenFromText(text: string): string {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const tokens = normalized.split(/\s+/);
+  if (tokens.length < 2) {
+    return "";
+  }
+
+  const commandToken = String(tokens[0] || "")
+    .trim()
+    .toLowerCase();
+
+  if (!commandToken.startsWith("/link")) {
+    return "";
+  }
+
+  return String(tokens[1] || "").trim();
 }
 
 async function handleInboundCommand(
@@ -166,8 +324,7 @@ async function handleInboundCommand(
     ].join("\n");
     replyMarkup = createMainMenuKeyboard();
   } else if (normalizedCommand === "dashboard") {
-    replyText =
-      "📊 Dashboard quick access: open your Eazee dashboard to monitor scheduled posts, deliveries, and wallet activity.";
+    replyText = await buildDashboardSummaryText(chatId);
     replyMarkup = createDashboardKeyboard();
   } else if (normalizedCommand === "help") {
     replyText = [
@@ -187,12 +344,14 @@ async function handleInboundCommand(
       ? "configured"
       : "not configured";
     const session = getTelegramSession(chatId);
+    const binding = await getTelegramBindingByChatId(chatId);
     replyText = [
       `Provider: ${provider}`,
       `Bot token: ${configured}`,
       "Webhook: enabled at /api/telegram/webhook",
       `Session interactions: ${session?.interactionCount || 0}`,
       `Last command: ${session?.lastCommand || "(none)"}`,
+      `Wallet binding: ${binding?.walletAddress || "(not linked)"}`,
     ].join("\n");
   }
 
@@ -208,6 +367,7 @@ async function handleInboundCommand(
       handled: true,
       replyMode: sendResult.mode,
       error: sendResult.error || "Failed to send command response",
+      action: `${normalizedCommand}:send_failed`,
     };
   }
 
@@ -215,6 +375,187 @@ async function handleInboundCommand(
     handled: true,
     replyMode: sendResult.mode,
     action: normalizedCommand,
+  };
+}
+
+async function handleBindCommand(
+  text: string,
+  chatId: string,
+): Promise<{
+  handled: boolean;
+  replyMode: "live" | "mock" | "none";
+  error?: string;
+  action?: string;
+}> {
+  const normalizedChatId = String(chatId || "").trim();
+  if (!normalizedChatId) {
+    return {
+      handled: false,
+      replyMode: "none",
+    };
+  }
+
+  const token = extractLinkTokenFromText(text);
+  if (!token) {
+    const usageResult = await sendTelegramTextMessage({
+      chatId: normalizedChatId,
+      text: [
+        "Wallet link usage:",
+        "/link <token>",
+        "Generate the token from POST /api/telegram/bind with action=request.",
+      ].join("\n"),
+      disableLinkPreview: true,
+      replyMarkup: createMainMenuKeyboard(),
+    });
+
+    if (!usageResult.ok) {
+      return {
+        handled: true,
+        replyMode: usageResult.mode,
+        error: usageResult.error || "Failed to send link usage response",
+        action: "link_usage_send_failed",
+      };
+    }
+
+    return {
+      handled: true,
+      replyMode: usageResult.mode,
+      action: "link_usage",
+    };
+  }
+
+  const confirmation = await confirmTelegramBindingToken({
+    token,
+    chatId: normalizedChatId,
+  });
+
+  const replyText = confirmation.ok
+    ? [
+        "✅ Wallet linked successfully.",
+        `Wallet: ${confirmation.binding.walletAddress}`,
+        "You can now schedule and track posts from this Telegram chat.",
+      ].join("\n")
+    : [
+        "❌ Could not link wallet.",
+        confirmation.error,
+        "Generate a new token and retry /link <token>.",
+      ].join("\n");
+
+  const sendResult = await sendTelegramTextMessage({
+    chatId: normalizedChatId,
+    text: replyText,
+    disableLinkPreview: true,
+    replyMarkup: createMainMenuKeyboard(),
+  });
+
+  if (!sendResult.ok) {
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      error: sendResult.error || "Failed to send link confirmation response",
+      action: confirmation.ok
+        ? "link_confirm_send_failed"
+        : "link_reject_send_failed",
+    };
+  }
+
+  return {
+    handled: true,
+    replyMode: sendResult.mode,
+    action: confirmation.ok ? "link_confirmed" : "link_rejected",
+    error: confirmation.ok ? undefined : confirmation.error,
+  };
+}
+
+async function handleInboundTextFallback(
+  text: string,
+  chatId: string,
+): Promise<{
+  handled: boolean;
+  replyMode: "live" | "mock" | "none";
+  error?: string;
+  action?: string;
+}> {
+  const normalizedText = String(text || "").trim();
+  const normalizedChatId = String(chatId || "").trim();
+
+  if (!normalizedText || !normalizedChatId) {
+    return {
+      handled: false,
+      replyMode: "none",
+    };
+  }
+
+  const sendResult = await sendTelegramTextMessage({
+    chatId: normalizedChatId,
+    text: [
+      "👋 I’m here.",
+      "Use /start for the main menu or /help to see all commands.",
+    ].join("\n"),
+    disableLinkPreview: true,
+    replyMarkup: createMainMenuKeyboard(),
+  });
+
+  if (!sendResult.ok) {
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      error: sendResult.error || "Failed to send fallback response",
+      action: "fallback_reply_failed",
+    };
+  }
+
+  return {
+    handled: true,
+    replyMode: sendResult.mode,
+    action: "fallback_reply",
+  };
+}
+
+async function handleUnsupportedCommand(
+  command: string,
+  chatId: string,
+): Promise<{
+  handled: boolean;
+  replyMode: "live" | "mock" | "none";
+  error?: string;
+  action?: string;
+}> {
+  const normalizedCommand = String(command || "")
+    .trim()
+    .toLowerCase();
+  const normalizedChatId = String(chatId || "").trim();
+
+  if (!normalizedCommand || !normalizedChatId) {
+    return {
+      handled: false,
+      replyMode: "none",
+    };
+  }
+
+  const sendResult = await sendTelegramTextMessage({
+    chatId: normalizedChatId,
+    text: [
+      `Unknown command: /${normalizedCommand}`,
+      "Use /help to view available commands.",
+    ].join("\n"),
+    disableLinkPreview: true,
+    replyMarkup: createMainMenuKeyboard(),
+  });
+
+  if (!sendResult.ok) {
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      error: sendResult.error || "Failed to send unsupported command response",
+      action: "unsupported_command_reply_failed",
+    };
+  }
+
+  return {
+    handled: true,
+    replyMode: sendResult.mode,
+    action: `unsupported_command:${normalizedCommand}`,
   };
 }
 
@@ -287,7 +628,10 @@ export async function GET() {
     expectedSecretHeaderName: "X-Telegram-Bot-Api-Secret-Token",
     botUsername: telegramBotUsername || null,
     miniAppUrl: isValidHttpsUrl(telegramMiniAppUrl) ? telegramMiniAppUrl : null,
-    supportedCommands: SUPPORTED_COMMANDS.map((command) => `/${command}`),
+    supportedCommands: [
+      ...SUPPORTED_COMMANDS.map((command) => `/${command}`),
+      ...EXTRA_SUPPORTED_COMMANDS,
+    ],
     supportsInlineKeyboard: true,
     supportsCallbackQueries: true,
     supportsSessions: true,
@@ -299,6 +643,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   if (!isAuthorizedWebhookRequest(request)) {
+    logTelegramWebhook("warn", "Rejected webhook request with invalid secret");
+
     return NextResponse.json(
       {
         error:
@@ -327,13 +673,38 @@ export async function POST(request: Request) {
       chatId: parsedUpdate.chatId || null,
     });
 
-    const commandResult = parsedUpdate.callbackQueryId
+    let commandResult = parsedUpdate.callbackQueryId
       ? await handleCallbackQuery({
           callbackQueryId: parsedUpdate.callbackQueryId,
           callbackData: parsedUpdate.callbackData,
           chatId: parsedUpdate.chatId,
         })
-      : await handleInboundCommand(parsedUpdate.command, parsedUpdate.chatId);
+      : parsedUpdate.command === "link"
+        ? await handleBindCommand(parsedUpdate.text, parsedUpdate.chatId)
+        : parsedUpdate.command
+          ? await handleInboundCommand(
+              parsedUpdate.command,
+              parsedUpdate.chatId,
+            )
+          : await handleInboundTextFallback(
+              parsedUpdate.text,
+              parsedUpdate.chatId,
+            );
+
+    if (parsedUpdate.command && !commandResult.handled) {
+      commandResult = await handleUnsupportedCommand(
+        parsedUpdate.command,
+        parsedUpdate.chatId,
+      );
+    }
+
+    logTelegramWebhook("info", "Update processed", {
+      eventId: event.id,
+      handledAction: commandResult.action || null,
+      replyMode: commandResult.replyMode,
+      replyError: commandResult.error || null,
+      commandHandled: commandResult.handled,
+    });
 
     if (commandResult.error) {
       logTelegramWebhook("warn", "Handled update with recoverable error", {
