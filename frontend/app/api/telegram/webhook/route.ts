@@ -121,6 +121,23 @@ function createDashboardKeyboard(): TelegramInlineKeyboardMarkup {
   };
 }
 
+function createLinkWalletKeyboard(): TelegramInlineKeyboardMarkup {
+  const inlineKeyboard: TelegramInlineKeyboardMarkup["inline_keyboard"] = [
+    [{ text: "🏠 Main Menu", callback_data: "nav:start" }],
+  ];
+
+  const appUrl = buildMiniAppUrl("/");
+  if (appUrl) {
+    inlineKeyboard.unshift([
+      { text: "🚀 Open Eazee App", web_app: { url: appUrl } },
+    ]);
+  }
+
+  return {
+    inline_keyboard: inlineKeyboard,
+  };
+}
+
 function getCommandFromCallbackData(callbackData: string): CommandName | null {
   const normalized = String(callbackData || "")
     .trim()
@@ -400,12 +417,25 @@ async function handleBindCommand(
     const usageResult = await sendTelegramTextMessage({
       chatId: normalizedChatId,
       text: [
-        "Wallet link usage:",
+        "🔗 Link Your Wallet",
+        "",
+        "To link your wallet to this Telegram account:",
+        "1) Open Eazee web app",
+        "2) Connect your wallet",
+        "3) Go to Settings → Link Telegram",
+        `4) Enter your Telegram ID: ${normalizedChatId}`,
+        "",
+        "Once linked, you'll be able to:",
+        "✅ View your intents in Telegram",
+        "✅ Manage payments directly from here",
+        "✅ Receive instant notifications",
+        "✅ Quick actions without opening the app",
+        "",
+        "After requesting your bind token in the app, confirm here with:",
         "/link <token>",
-        "Generate the token from POST /api/telegram/bind with action=request.",
       ].join("\n"),
       disableLinkPreview: true,
-      replyMarkup: createMainMenuKeyboard(),
+      replyMarkup: createLinkWalletKeyboard(),
     });
 
     if (!usageResult.ok) {

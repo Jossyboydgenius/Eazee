@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node scripts/dev-with-telegram.mjs",
     "dev:next": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint .",
     "prisma:generate": "prisma generate",
@@ -50,6 +51,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.3.1",
     "eslint": "^9.0.0",
     "eslint-config-next": "16.1.6",
     "postcss": "^8.4.49",

@@ -82,6 +82,25 @@ Yes. Thirdweb social/in-app wallet login works with EVM chains, including Celo (
 - In Telegram Mini App context, external wallets like MetaMask/Coinbase are hidden to avoid failed connect attempts.
 - On desktop/mobile browsers outside Telegram, Google/Apple/email + external wallets remain available.
 - Recommended UX: keep Telegram Mini App on email OTP for sign-in, then use the existing Telegram binding flow to link chat identity to the same wallet account.
+- Sidebar hint added: **Settings → Link Telegram** now points to `Settings` (`/settings#telegram-link-settings`) so users can open a dedicated binding page.
+
+### Telegram Identity Architecture (Recommended)
+
+- Do **not** let Telegram call the database directly.
+- Use this pattern: `Telegram update -> backend API route -> telegram/wallet binding lookup -> DB query`.
+- This is the expected production-safe flow and aligns with the existing wallet/session binding routes.
+
+### `.data` Files and GitHub Policy
+
+- Keep `frontend/.data/` ignored in git (runtime state, local SQLite, and webhook/session artifacts).
+- Do **not** commit `frontend/.data/telegram-webhook-state.json` or similar state snapshots to GitHub.
+- If a `.data` file was tracked earlier, remove it from git tracking (`git rm --cached ...`) while keeping it locally.
+
+### Vercel + Prisma Build Reliability
+
+- `build` runs `prisma generate && next build` so Prisma Client is regenerated every deployment.
+- `postinstall` also runs `prisma generate` for fresh installs.
+- This avoids Vercel cache edge cases where dependency caching can skip regeneration unless build explicitly runs it.
 
 ### x402 Payments (server-side)
 

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 
 type DispatchJobRow = Awaited<
   ReturnType<typeof prisma.dispatchJob.findMany>
@@ -182,7 +183,7 @@ export async function enqueueWhatsAppJob(
       sendTime: input.sendTime,
       repeatValue: input.repeat,
       scheduledFor: new Date(input.scheduledFor),
-      targets: input.targets || [],
+      targets: (input.targets || []) as unknown as Prisma.InputJsonValue,
       status: "queued",
       createdAt: new Date(now),
       updatedAt: new Date(now),

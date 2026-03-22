@@ -306,6 +306,31 @@ function SidebarContent({
         className={cn("border-t py-4", collapsed ? "px-2" : "px-4")}
         style={{ borderColor: "var(--sidebar-border)" }}
       >
+        {!collapsed && (
+          <div
+            className="mb-3 rounded-xl border px-3 py-2.5"
+            style={{
+              background: "var(--bg-elevated)",
+              borderColor: "var(--border)",
+            }}
+          >
+            <p
+              className="text-[11px] font-semibold"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Settings
+            </p>
+            <Link
+              href="/settings#telegram-link-settings"
+              onClick={onNavClick}
+              className="text-xs font-semibold"
+              style={{ color: "var(--brand-dark)" }}
+            >
+              Link Telegram
+            </Link>
+          </div>
+        )}
+
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}

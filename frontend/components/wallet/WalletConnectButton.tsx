@@ -22,9 +22,9 @@ export function WalletConnectButton({
 }: WalletConnectButtonProps) {
   const isTelegram = useMemo(() => isTelegramMiniApp(), []);
 
-  const inAppAuthOptions = isTelegram
-    ? (["email"] as const)
-    : (["google", "apple", "email"] as const);
+  const inAppAuthOptions: Array<"email" | "google" | "apple"> = isTelegram
+    ? ["email"]
+    : ["google", "apple", "email"];
 
   const fallbackAvatar =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23d8b4fe'/%3E%3Cstop offset='100%25' stop-color='%237e22ce'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='96' height='96' rx='48' fill='url(%23g)'/%3E%3C/svg%3E";
