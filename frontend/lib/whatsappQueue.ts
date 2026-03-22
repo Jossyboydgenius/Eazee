@@ -423,3 +423,110 @@ export async function listWhatsAppJobsByOwner(input: {
 
   return rows.map(mapJobRow);
 }
+
+export async function getWhatsAppJobById(
+  jobId: string,
+): Promise<WhatsAppDispatchJob | null> {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) {
+    return null;
+  }
+
+  const row = await prisma.dispatchJob.findUnique({
+    where: { id: normalizedJobId },
+  });
+
+  return row ? mapJobRow(row) : null;
+}
+
+export async function updateQueuedWhatsAppJob(
+  jobId: string,
+  patch: {
+    caption: string;
+    templateName?: string;
+    templateLanguageCode?: string;
+    templateBodyParameters?: string[];
+    templateHeaderImageUrl?: string;
+    postType: string;
+    brief: string;
+    tone: string;
+    photos: string[];
+    hasCeloPayment: boolean;
+    price: string;
+    currency: string;
+    waAccount: string;
+    sendTime: string;
+    repeat: string;
+    targets: WhatsAppDispatchTarget[];
+    scheduledFor: string;
+    ownerChatId?: string;
+    ownerWalletAddress?: string;
+  },
+): Promise<WhatsAppDispatchJob | null> {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) {
+    return null;
+  }
+
+  const existing = await prisma.dispatchJob.findUnique({
+    where: { id: normalizedJobId },
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  if (existing.status !== "queued") {
+    throw new Error("Only queued posts can be updated");
+  }
+
+  await prisma.dispatchJob.update({
+    where: { id: normalizedJobId },
+    data: {
+      caption: patch.caption,
+      templateName: patch.templateName || null,
+      templateLanguageCode: patch.templateLanguageCode || null,
+      templateBodyParameters: patch.templateBodyParameters || [],
+      templateHeaderImageUrl: patch.templateHeaderImageUrl || null,
+      postType: patch.postType,
+      brief: patch.brief,
+      tone: patch.tone,
+      photos: patch.photos || [],
+      hasCeloPayment: patch.hasCeloPayment,
+      price: patch.price,
+      currency: patch.currency,
+      waAccount: patch.waAccount,
+      sendTime: patch.sendTime,
+      repeatValue: patch.repeat,
+      targets: (patch.targets || []) as unknown as Prisma.InputJsonValue,
+      scheduledFor: new Date(patch.scheduledFor),
+      ownerChatId: patch.ownerChatId || null,
+      ownerWalletAddress: patch.ownerWalletAddress || null,
+      updatedAt: new Date(nowIso()),
+    },
+  });
+
+  return getWhatsAppJobById(normalizedJobId);
+}
+
+export async function deleteQueuedWhatsAppJob(jobId: string): Promise<boolean> {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) {
+    return false;
+  }
+
+  const existing = await prisma.dispatchJob.findUnique({
+    where: { id: normalizedJobId },
+  });
+
+  if (!existing) {
+    return false;
+  }
+
+  if (existing.status !== "queued") {
+    throw new Error("Only queued posts can be deleted");
+  }
+
+  await prisma.dispatchJob.delete({ where: { id: normalizedJobId } });
+  return true;
+}

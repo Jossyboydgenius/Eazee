@@ -4,29 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { useEazeeStore } from "@/lib/store";
-import {
-  cn,
-  formatNumberWithDelimiters,
-  getTimeAgo,
-  stripNumberFormatting,
-} from "@/lib/utils";
-import { celoChain, celoExplorerBaseUrl, thirdwebClient } from "@/lib/celo";
-import {
-  ERC20_APPROVE_ABI,
-  ESCROW_ABI,
-  getEscrowContractAddress,
-  getEscrowSellerAddress,
-  STABLECOIN_ADDRESS_BY_SYMBOL,
-} from "@/lib/escrow";
+import { useEazeeStore, type ScheduledPost } from "@/lib/store";
+import { cn, formatNumberWithDelimiters, getTimeAgo } from "@/lib/utils";
+import { celoExplorerBaseUrl } from "@/lib/celo";
 import { toast } from "@/lib/toast";
-import {
-  getContract,
-  isAddress,
-  prepareContractCall,
-  sendAndConfirmTransaction,
-  toUnits,
-} from "thirdweb";
 import { useActiveAccount } from "thirdweb/react";
 import calendarIcon from "@/svg/calendar.svg";
 import dollarIcon from "@/svg/dollar.svg";
@@ -43,6 +24,141 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
+
+const WALLET_SESSION_STORAGE_KEY = "eazee-wallet-session";
+
+interface WalletSessionCacheRecord {
+  token: string;
+  walletAddress: string;
+  expiresAt: string;
+}
+
+function canUseBrowserStorage(): boolean {
+  return (
+    typeof window !== "undefined" && typeof window.localStorage !== "undefined"
+  );
+}
+
+function readWalletSessionCache(): WalletSessionCacheRecord | null {
+  if (!canUseBrowserStorage()) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WALLET_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<WalletSessionCacheRecord>;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.token !== "string" ||
+      typeof parsed.walletAddress !== "string" ||
+      typeof parsed.expiresAt !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      token: parsed.token.trim(),
+      walletAddress: parsed.walletAddress.trim().toLowerCase(),
+      expiresAt: parsed.expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mapDashboardJobToScheduledPost(
+  job: Record<string, unknown>,
+): ScheduledPost | null {
+  const id = String(job.id || "").trim();
+  if (!id) {
+    return null;
+  }
+
+  const statusRaw = String(job.status || "queued")
+    .trim()
+    .toLowerCase();
+  const status: ScheduledPost["status"] =
+    statusRaw === "sent"
+      ? "sent"
+      : statusRaw === "failed"
+        ? "failed"
+        : "upcoming";
+
+  const targets = Array.isArray(job.targets)
+    ? job.targets
+        .map((target) => {
+          if (!target || typeof target !== "object") {
+            return "";
+          }
+
+          const asRecord = target as Record<string, unknown>;
+          return String(asRecord.id || asRecord.type || "").trim();
+        })
+        .filter(Boolean)
+    : [];
+
+  const groups = Array.isArray(job.targets)
+    ? job.targets
+        .map((target) => {
+          if (!target || typeof target !== "object") {
+            return "";
+          }
+
+          const asRecord = target as Record<string, unknown>;
+          if (String(asRecord.type || "").trim() !== "groups") {
+            return "";
+          }
+
+          return String(asRecord.id || "").trim();
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    id,
+    photos: Array.isArray(job.photos)
+      ? job.photos.map((value) => String(value || "")).filter(Boolean)
+      : [],
+    productName: String(job.productName || "").trim(),
+    postType: String(job.postType || "").trim(),
+    brief: String(job.brief || "").trim(),
+    tone: String(job.tone || "").trim(),
+    caption: String(job.caption || "").trim(),
+    templateName:
+      typeof job.templateName === "string" ? job.templateName : undefined,
+    templateLanguageCode:
+      typeof job.templateLanguageCode === "string"
+        ? job.templateLanguageCode
+        : undefined,
+    templateBodyParameters: Array.isArray(job.templateBodyParameters)
+      ? job.templateBodyParameters
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : undefined,
+    templateHeaderImageUrl:
+      typeof job.templateHeaderImageUrl === "string"
+        ? job.templateHeaderImageUrl
+        : undefined,
+    hasCeloPayment: Boolean(job.hasCeloPayment),
+    price: String(job.price || "").trim(),
+    currency: String(job.currency || "cUSD").trim(),
+    waAccount: String(job.waAccount || "").trim(),
+    sendTime: String(job.sendTime || "").trim(),
+    repeat:
+      job.repeat === "daily" ||
+      job.repeat === "weekly" ||
+      job.repeat === "monthly"
+        ? job.repeat
+        : "one-time",
+    targets,
+    groups,
+    status,
+    createdAt: String(job.createdAt || new Date().toISOString()),
+  };
+}
 
 const TABS = [
   { id: "posts", label: "Posts", iconSrc: calendarIcon },
@@ -197,13 +313,126 @@ export default function DashboardPage() {
  ───────────────────────────────────────────────────────────────── */
 function PostsTab() {
   const router = useRouter();
-  const { posts, removePost, startEditingPost } = useEazeeStore();
+  const account = useActiveAccount();
+  const { posts, setPosts, removePost, startEditingPost } = useEazeeStore();
+  const walletAddress = account?.address?.trim().toLowerCase() || "";
   const [filter, setFilter] = useState<"all" | "upcoming" | "sent">("all");
   const [pendingDeletePostId, setPendingDeletePostId] = useState<string | null>(
     null,
   );
+  const [isDeletingPost, setIsDeletingPost] = useState(false);
+
+  const loadDashboardHistoryPosts = useCallback(async () => {
+    if (!walletAddress) {
+      return;
+    }
+
+    try {
+      const headers: Record<string, string> = {};
+      const walletSession = readWalletSessionCache();
+
+      if (
+        walletSession?.token &&
+        walletSession.walletAddress === walletAddress &&
+        Number.isFinite(Date.parse(walletSession.expiresAt)) &&
+        Date.parse(walletSession.expiresAt) > Date.now() + 30_000
+      ) {
+        headers.Authorization = `Bearer ${walletSession.token}`;
+      }
+
+      const response = await fetch(
+        `/api/dashboard/history?walletAddress=${encodeURIComponent(walletAddress)}&limit=100`,
+        {
+          method: "GET",
+          cache: "no-store",
+          headers,
+        },
+      );
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      const jobs = Array.isArray(payload?.jobs)
+        ? (payload.jobs as Array<Record<string, unknown>>)
+        : [];
+
+      const mappedPosts = jobs
+        .map((job) => mapDashboardJobToScheduledPost(job))
+        .filter((post): post is ScheduledPost => Boolean(post));
+
+      if (mappedPosts.length > 0) {
+        setPosts(mappedPosts);
+      }
+    } catch {
+      // Keep local fallback state when network/db call fails.
+    }
+  }, [walletAddress, setPosts]);
+
+  useEffect(() => {
+    void loadDashboardHistoryPosts();
+  }, [loadDashboardHistoryPosts]);
 
   const filtered = posts.filter((p) => filter === "all" || p.status === filter);
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDeletePostId) {
+      return;
+    }
+
+    const postId = pendingDeletePostId;
+    setIsDeletingPost(true);
+
+    try {
+      const headers: Record<string, string> = {};
+      const walletSession = readWalletSessionCache();
+
+      if (
+        walletSession?.token &&
+        walletSession.walletAddress === walletAddress &&
+        Number.isFinite(Date.parse(walletSession.expiresAt)) &&
+        Date.parse(walletSession.expiresAt) > Date.now() + 30_000
+      ) {
+        headers.Authorization = `Bearer ${walletSession.token}`;
+      }
+
+      const response = await fetch(
+        `/api/schedule-post/${encodeURIComponent(postId)}`,
+        {
+          method: "DELETE",
+          headers,
+        },
+      );
+
+      if (!response.ok && response.status !== 404) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(
+          typeof payload?.error === "string"
+            ? payload.error
+            : "Failed to delete post",
+        );
+      }
+
+      removePost(postId);
+      toast({
+        title: "Post deleted",
+        description: "Upcoming schedule removed successfully.",
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Delete failed",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "error",
+      });
+      return;
+    } finally {
+      setIsDeletingPost(false);
+      setPendingDeletePostId(null);
+    }
+  };
 
   return (
     <motion.div variants={container} initial="hidden" animate="show">
@@ -288,17 +517,16 @@ function PostsTab() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
-                    removePost(pendingDeletePostId);
-                    setPendingDeletePostId(null);
-                  }}
+                  onClick={handleConfirmDelete}
+                  disabled={isDeletingPost}
                   className="px-3 py-2 rounded-lg text-sm font-semibold"
                   style={{
                     background: "#F54E38",
                     color: "white",
+                    opacity: isDeletingPost ? 0.7 : 1,
                   }}
                 >
-                  Delete
+                  {isDeletingPost ? "Deleting..." : "Delete"}
                 </button>
               </div>
             </motion.div>
@@ -507,28 +735,17 @@ function PostCard({
  ───────────────────────────────────────────────────────────────── */
 function PaymentsTab() {
   const account = useActiveAccount();
-  const { transactions, setTransactions, addTransaction } = useEazeeStore();
-  const [depositAmount, setDepositAmount] = useState("1.00");
-  const [depositCurrency, setDepositCurrency] = useState<
-    "cUSD" | "cEUR" | "cREAL"
-  >("cUSD");
-  const [productName, setProductName] = useState("WhatsApp Product");
-  const [isDepositing, setIsDepositing] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  const escrowContractAddress = getEscrowContractAddress();
-  const escrowSellerAddress = getEscrowSellerAddress();
-  const isEscrowReady =
-    isAddress(escrowContractAddress) && isAddress(escrowSellerAddress);
+  const { transactions, setTransactions } = useEazeeStore();
+  const accountAddress = account?.address || "";
 
   const loadPersistedPayments = useCallback(async () => {
-    if (!account?.address) {
+    if (!accountAddress) {
       return;
     }
 
     try {
       const response = await fetch(
-        `/api/payments?walletAddress=${account.address}&limit=100`,
+        `/api/payments?walletAddress=${accountAddress}&limit=100`,
         {
           method: "GET",
           cache: "no-store",
@@ -563,209 +780,11 @@ function PaymentsTab() {
     } catch {
       // Ignore transient network/db read errors.
     }
-  }, [account?.address, setTransactions]);
+  }, [accountAddress, setTransactions]);
 
   useEffect(() => {
     void loadPersistedPayments();
   }, [loadPersistedPayments]);
-
-  const handleDeposit = async () => {
-    if (!account?.address) {
-      toast({
-        title: "Connect wallet first",
-        description:
-          "Connect your wallet before sending a deposit transaction.",
-        variant: "error",
-      });
-      return;
-    }
-
-    if (!isEscrowReady) {
-      toast({
-        title: "Escrow is not configured",
-        description:
-          "Set NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS and NEXT_PUBLIC_ESCROW_SELLER_ADDRESS in frontend/.env.local.",
-        variant: "error",
-      });
-      return;
-    }
-
-    const normalizedAmount = stripNumberFormatting(depositAmount).trim();
-    const numericAmount = Number(normalizedAmount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      toast({
-        title: "Invalid amount",
-        description: "Enter a valid payment amount greater than zero.",
-        variant: "error",
-      });
-      return;
-    }
-
-    const tokenAddress = STABLECOIN_ADDRESS_BY_SYMBOL[depositCurrency];
-    if (!isAddress(tokenAddress)) {
-      toast({
-        title: "Stablecoin address missing",
-        description:
-          "Configure NEXT_PUBLIC_CUSD_ADDRESS / NEXT_PUBLIC_CEUR_ADDRESS / NEXT_PUBLIC_CREAL_ADDRESS.",
-        variant: "error",
-      });
-      return;
-    }
-
-    const safeProductName = productName.trim() || "WhatsApp Product";
-    const productId = `post-${Date.now()}`;
-    const amountWei = toUnits(normalizedAmount, 18);
-
-    try {
-      setIsDepositing(true);
-
-      const tokenContract = getContract({
-        client: thirdwebClient,
-        chain: celoChain,
-        address: tokenAddress,
-        abi: ERC20_APPROVE_ABI,
-      });
-
-      const escrowContract = getContract({
-        client: thirdwebClient,
-        chain: celoChain,
-        address: escrowContractAddress,
-        abi: ESCROW_ABI,
-      });
-
-      const approveTx = prepareContractCall({
-        contract: tokenContract,
-        method: "approve",
-        params: [escrowContractAddress, amountWei],
-      });
-
-      await sendAndConfirmTransaction({
-        account,
-        transaction: approveTx,
-      });
-
-      const depositTx = prepareContractCall({
-        contract: escrowContract,
-        method: "deposit",
-        params: [
-          escrowSellerAddress,
-          tokenAddress,
-          amountWei,
-          productId,
-          safeProductName,
-        ],
-      });
-
-      const receipt = await sendAndConfirmTransaction({
-        account,
-        transaction: depositTx,
-      });
-
-      const txHash = receipt.transactionHash;
-
-      const persistResponse = await fetch("/api/payments", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          txHash,
-          buyer: account.address,
-          seller: escrowSellerAddress,
-          tokenAddress,
-          amount: normalizedAmount,
-          currency: depositCurrency,
-          productId,
-          productName: safeProductName,
-          contractAddress: escrowContractAddress,
-          ownerWalletAddress: account.address,
-          chainId: celoChain.id,
-          escrowStatus: "pending",
-        }),
-      });
-
-      if (!persistResponse.ok) {
-        throw new Error("Transaction sent but payment persistence failed");
-      }
-
-      const persistedPayload = await persistResponse.json().catch(() => ({}));
-      const paymentRecord = persistedPayload?.payment as
-        | Record<string, unknown>
-        | undefined;
-
-      addTransaction({
-        id: String(paymentRecord?.id || txHash),
-        txHash,
-        buyer: account.address,
-        productName: safeProductName,
-        amount: normalizedAmount,
-        currency: depositCurrency,
-        escrowStatus: "pending",
-        timestamp: new Date().toISOString(),
-      });
-
-      toast({
-        title: "Deposit submitted",
-        description: "Deposit transaction is confirmed on-chain and saved.",
-        variant: "success",
-      });
-
-      await fetch("/api/payments/reconcile", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ txHash }),
-      });
-
-      await loadPersistedPayments();
-    } catch (error) {
-      console.error(error);
-      toast({
-        title: "Deposit failed",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Unable to complete escrow deposit.",
-        variant: "error",
-      });
-    } finally {
-      setIsDepositing(false);
-    }
-  };
-
-  const handleSync = async () => {
-    if (!transactions.length) {
-      return;
-    }
-
-    try {
-      setIsSyncing(true);
-      await Promise.all(
-        transactions.map((tx) =>
-          fetch("/api/payments/reconcile", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ txHash: tx.txHash }),
-          }),
-        ),
-      );
-      await loadPersistedPayments();
-      toast({
-        title: "Payments synced",
-        description: "Transaction status refreshed from chain receipts.",
-        variant: "success",
-      });
-    } catch {
-      toast({
-        title: "Sync failed",
-        description: "Could not refresh payment statuses from chain right now.",
-        variant: "error",
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   return (
     <motion.div
@@ -799,72 +818,6 @@ function PaymentsTab() {
           Every &quot;Buy Now&quot; tap from your WhatsApp post triggers a cUSD
           payment to your escrow contract. Funds release when the order is
           confirmed. No middleman, no bank.
-        </p>
-      </motion.div>
-
-      <motion.div variants={item} className="glass-card p-4 sm:p-5 space-y-3">
-        <h3
-          className="font-semibold text-sm"
-          style={{ color: "var(--text-primary)" }}
-        >
-          Make Escrow Deposit
-        </h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <input
-            value={productName}
-            onChange={(event) => setProductName(event.target.value)}
-            placeholder="Product name"
-            className="input-base"
-          />
-          <input
-            value={depositAmount}
-            onChange={(event) => setDepositAmount(event.target.value)}
-            placeholder="Amount"
-            className="input-base"
-          />
-          <select
-            value={depositCurrency}
-            onChange={(event) =>
-              setDepositCurrency(
-                event.target.value as "cUSD" | "cEUR" | "cREAL",
-              )
-            }
-            className="input-base"
-            style={{
-              background: "var(--bg-elevated)",
-              color: "var(--text-primary)",
-            }}
-          >
-            <option value="cUSD">cUSD</option>
-            <option value="cEUR">cEUR</option>
-            <option value="cREAL">cREAL</option>
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={handleDeposit}
-            disabled={isDepositing || !account?.address || !isEscrowReady}
-            className="btn-primary"
-          >
-            {isDepositing ? "Processing deposit..." : "Approve + Deposit"}
-          </button>
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={isSyncing || transactions.length === 0}
-            className="btn-ghost"
-          >
-            {isSyncing ? "Syncing..." : "Sync from Chain"}
-          </button>
-        </div>
-
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-          {isEscrowReady
-            ? `Escrow: ${escrowContractAddress.slice(0, 8)}...${escrowContractAddress.slice(-6)} | Seller: ${escrowSellerAddress.slice(0, 8)}...${escrowSellerAddress.slice(-6)}`
-            : "Configure NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS and NEXT_PUBLIC_ESCROW_SELLER_ADDRESS to enable deposits."}
         </p>
       </motion.div>
 

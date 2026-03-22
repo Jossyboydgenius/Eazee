@@ -716,6 +716,10 @@ export default function SchedulePage() {
   const [newAccountNumber, setNewAccountNumber] = useState("");
   const [newAccountNumberError, setNewAccountNumberError] = useState("");
   const [timeMode, setTimeMode] = useState<"ai" | "custom">("ai");
+  const [isLoadingSuggestedTimes, setIsLoadingSuggestedTimes] = useState(false);
+  const [fetchedRecommendedTimes, setFetchedRecommendedTimes] = useState<
+    string[]
+  >([]);
   const [isScheduling, setIsScheduling] = useState(false);
   const [showTemplateLanguageMenu, setShowTemplateLanguageMenu] =
     useState(false);
@@ -806,10 +810,14 @@ export default function SchedulePage() {
     },
     {},
   );
-  const aiRecommendedTimes = useMemo(
+  const fallbackRecommendedTimes = useMemo(
     () => getAiRecommendedTimes(targets, repeat, posts, selectedAccount),
     [targets, repeat, posts, selectedAccount],
   );
+  const aiRecommendedTimes =
+    fetchedRecommendedTimes.length > 0
+      ? fetchedRecommendedTimes
+      : fallbackRecommendedTimes;
   const aiRelevantHistoryCount = useMemo(
     () => getRelevantPostsForAi(posts, selectedAccount, targets).length,
     [posts, selectedAccount, targets],
@@ -821,6 +829,54 @@ export default function SchedulePage() {
     aiRelevantHistoryCount > 0
       ? `from ${aiRelevantHistoryCount} scheduled post${aiRelevantHistoryCount === 1 ? "" : "s"}, your audience mix, and current local time.`
       : "from audience engagement patterns and current local time.";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchRecommendedTimes = async () => {
+      setIsLoadingSuggestedTimes(true);
+
+      try {
+        const response = await fetch("/api/schedule-suggestions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            targets,
+            repeat,
+            posts,
+            selectedAccount,
+          }),
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        const recommendedTimes = Array.isArray(payload?.recommendedTimes)
+          ? payload.recommendedTimes
+              .map((value: unknown) => String(value || "").trim())
+              .filter(Boolean)
+          : [];
+
+        if (!cancelled) {
+          setFetchedRecommendedTimes(recommendedTimes);
+        }
+      } catch {
+        if (!cancelled) {
+          setFetchedRecommendedTimes([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingSuggestedTimes(false);
+        }
+      }
+    };
+
+    void fetchRecommendedTimes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [targets, repeat, posts, selectedAccount]);
 
   useEffect(() => {
     if (timeMode !== "ai") return;
@@ -1115,8 +1171,13 @@ export default function SchedulePage() {
         MESSAGING_PROVIDER,
       );
 
-      const scheduleResponse = await fetch("/api/schedule-post", {
-        method: "POST",
+      const scheduleEndpoint = editingPostId
+        ? `/api/schedule-post/${encodeURIComponent(editingPostId)}`
+        : "/api/schedule-post";
+      const scheduleMethod = editingPostId ? "PATCH" : "POST";
+
+      const scheduleResponse = await fetch(scheduleEndpoint, {
+        method: scheduleMethod,
         headers: {
           "Content-Type": "application/json",
           ...(walletSessionToken
@@ -1184,7 +1245,10 @@ export default function SchedulePage() {
       }
 
       savePost({
-        id: editingPostId ?? `post-${Date.now()}`,
+        id:
+          typeof scheduleResult?.jobId === "string" && scheduleResult.jobId
+            ? scheduleResult.jobId
+            : (editingPostId ?? `post-${Date.now()}`),
         photos: photos.map((photo) => photo.preview),
         productName,
         postType,
@@ -2188,7 +2252,7 @@ export default function SchedulePage() {
                       timeMode === "ai" ? "var(--brand-green)" : "transparent",
                   }}
                 >
-                  <Sparkles className="w-3 h-3" /> AI Suggest
+                  <Sparkles className="w-3 h-3" /> Smart Suggest
                 </button>
                 <button
                   onClick={() => setTimeMode("custom")}
@@ -2237,8 +2301,15 @@ export default function SchedulePage() {
                 >
                   <Sparkles className="w-4 h-4 text-[var(--brand-dark)] shrink-0" />
                   <p className="text-[11px] text-[var(--text-primary)]">
-                    AI recommends <strong>{aiRecommendationText}</strong> based
-                    {` ${aiRecommendationReason}`}
+                    {isLoadingSuggestedTimes
+                      ? "Finding your best posting times..."
+                      : "Algorithm recommends "}
+                    {!isLoadingSuggestedTimes && (
+                      <>
+                        <strong>{aiRecommendationText}</strong> based
+                        {` ${aiRecommendationReason}`}
+                      </>
+                    )}
                   </p>
                 </div>
 
@@ -2266,12 +2337,12 @@ export default function SchedulePage() {
                             : isActive
                               ? "var(--brand-dark)"
                               : "var(--text-secondary)",
-                          background:
-                            isAiTagged && isActive
-                              ? "rgba(245, 78, 56, 0.08)"
-                              : isActive
-                                ? "var(--brand-dim)"
-                                : "transparent",
+                          background: isActive
+                            ? "var(--brand-dim)"
+                            : "transparent",
+                          boxShadow: isActive
+                            ? "inset 0 0 0 1px var(--brand-green)"
+                            : "none",
                         }}
                       >
                         {time}

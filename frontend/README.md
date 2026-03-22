@@ -209,7 +209,7 @@ Cron notes:
 
 Inbound bot capabilities in `/api/telegram/webhook`:
 
-- Commands: `/start`, `/create`, `/dashboard`, `/help`, `/status`
+- Commands: `/start`, `/link <token>`, `/create`, `/dashboard`, `/help`, `/status`
 - Inline keyboard navigation + callback query handling
 - Per-chat session tracking persisted in `.data/telegram-webhook-state.json`
 - Request logging and structured error responses

@@ -302,6 +302,7 @@ function extractLinkTokenFromText(text: string): string {
 async function handleInboundCommand(
   command: string,
   chatId: string,
+  text = "",
 ): Promise<{
   handled: boolean;
   replyMode: "live" | "mock" | "none";
@@ -327,9 +328,32 @@ async function handleInboundCommand(
   let replyMarkup: TelegramInlineKeyboardMarkup | undefined;
 
   if (normalizedCommand === "start") {
-    replyText =
-      "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.";
-    replyMarkup = createMainMenuKeyboard();
+    const deepLinkToken = extractBindTokenFromStartPayload(text);
+
+    if (deepLinkToken) {
+      const confirmation = await confirmTelegramBindingToken({
+        token: deepLinkToken,
+        chatId,
+      });
+
+      replyText = confirmation.ok
+        ? [
+            "✅ Wallet linked successfully.",
+            `Wallet: ${confirmation.binding.walletAddress}`,
+            "You can now schedule and track posts from this Telegram chat.",
+          ].join("\n")
+        : [
+            "❌ Could not link wallet from this start link.",
+            confirmation.error,
+            "Open Eazee app, request a new token, then run /link <token>.",
+          ].join("\n");
+
+      replyMarkup = createMainMenuKeyboard();
+    } else {
+      replyText =
+        "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.";
+      replyMarkup = createMainMenuKeyboard();
+    }
   } else if (normalizedCommand === "create") {
     replyText = [
       "🧩 Create flow",
@@ -347,6 +371,8 @@ async function handleInboundCommand(
     replyText = [
       "Eazee Telegram Bot Commands:",
       "/start - Verify the bot is active",
+      "/start bind_<token> - Link wallet directly from app button",
+      "/link <token> - Link wallet using token from app",
       "/create - Open content creation flow",
       "/dashboard - Open dashboard actions",
       "/help - Show available commands",
@@ -393,6 +419,33 @@ async function handleInboundCommand(
     replyMode: sendResult.mode,
     action: normalizedCommand,
   };
+}
+
+function extractBindTokenFromStartPayload(text: string): string {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const tokens = normalized.split(/\s+/);
+  if (tokens.length < 2) {
+    return "";
+  }
+
+  const commandToken = String(tokens[0] || "")
+    .trim()
+    .toLowerCase();
+
+  if (!commandToken.startsWith("/start")) {
+    return "";
+  }
+
+  const payloadToken = String(tokens[1] || "").trim();
+  if (!payloadToken.startsWith("bind_")) {
+    return "";
+  }
+
+  return payloadToken.slice("bind_".length).trim();
 }
 
 async function handleBindCommand(
@@ -715,6 +768,7 @@ export async function POST(request: Request) {
           ? await handleInboundCommand(
               parsedUpdate.command,
               parsedUpdate.chatId,
+              parsedUpdate.text,
             )
           : await handleInboundTextFallback(
               parsedUpdate.text,

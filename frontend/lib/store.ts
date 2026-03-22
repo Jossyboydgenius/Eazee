@@ -96,6 +96,7 @@ interface EazeeStore {
   setTargets: (targets: string[]) => void;
   setSelectedGroups: (groups: string[]) => void;
   addWAAccount: (account: Omit<WAAccount, "id">) => string;
+  setPosts: (posts: ScheduledPost[]) => void;
   addPost: (post: ScheduledPost) => void;
   savePost: (post: ScheduledPost) => void;
   removePost: (id: string) => void;
@@ -113,9 +114,33 @@ type StoredPhoto = {
 
 type PhotosByAccount = Record<string, StoredPhoto[]>;
 
+type ComposeDraftState = {
+  productName: string;
+  postType: string;
+  brief: string;
+  tone: string;
+  hasCeloPayment: boolean;
+  price: string;
+  currency: string;
+  generatedCaption: string;
+  captionDraft: string;
+};
+
+type ScheduleDraftState = {
+  sendTime: string;
+  customDateTime: string;
+  repeat: "one-time" | "daily" | "weekly" | "monthly";
+  targets: string[];
+  selectedGroups: string[];
+};
+
 const STORAGE_WA_ACCOUNTS_KEY = "eazee-wa-accounts";
 const STORAGE_SELECTED_ACCOUNT_KEY = "eazee-selected-account";
 const STORAGE_PHOTOS_BY_ACCOUNT_KEY = "eazee-photos-by-account";
+const STORAGE_COMPOSE_DRAFT_KEY = "eazee-compose-draft";
+const STORAGE_SCHEDULE_DRAFT_KEY = "eazee-schedule-draft";
+const STORAGE_POSTS_KEY = "eazee-posts";
+const STORAGE_TRANSACTIONS_KEY = "eazee-transactions";
 const DEFAULT_ACCOUNT_STORAGE_KEY = "__default__";
 const LEGACY_SEEDED_ACCOUNT_KEYS = new Set([
   "main business|+2348012345678",
@@ -272,6 +297,193 @@ function persistPhotosForAccount(
   persistPhotosByAccount(map);
 }
 
+function loadComposeDraft(): ComposeDraftState {
+  const parsed = parseJson<Partial<ComposeDraftState>>(
+    safeReadStorage(STORAGE_COMPOSE_DRAFT_KEY),
+    {},
+  );
+
+  return {
+    productName: String(parsed.productName || ""),
+    postType: String(parsed.postType || ""),
+    brief: String(parsed.brief || ""),
+    tone: String(parsed.tone || ""),
+    hasCeloPayment: Boolean(parsed.hasCeloPayment),
+    price: String(parsed.price || ""),
+    currency: String(parsed.currency || "cUSD"),
+    generatedCaption: String(parsed.generatedCaption || ""),
+    captionDraft: String(parsed.captionDraft || ""),
+  };
+}
+
+function persistComposeDraft(draft: ComposeDraftState): void {
+  safeWriteStorage(STORAGE_COMPOSE_DRAFT_KEY, JSON.stringify(draft));
+}
+
+function loadScheduleDraft(): ScheduleDraftState {
+  const parsed = parseJson<Partial<ScheduleDraftState>>(
+    safeReadStorage(STORAGE_SCHEDULE_DRAFT_KEY),
+    {},
+  );
+
+  return {
+    sendTime: String(parsed.sendTime || ""),
+    customDateTime: String(parsed.customDateTime || ""),
+    repeat:
+      parsed.repeat === "daily" ||
+      parsed.repeat === "weekly" ||
+      parsed.repeat === "monthly"
+        ? parsed.repeat
+        : "one-time",
+    targets: Array.isArray(parsed.targets)
+      ? parsed.targets.map((value) => String(value || "")).filter(Boolean)
+      : [],
+    selectedGroups: Array.isArray(parsed.selectedGroups)
+      ? parsed.selectedGroups
+          .map((value) => String(value || ""))
+          .filter(Boolean)
+      : [],
+  };
+}
+
+function persistScheduleDraft(draft: ScheduleDraftState): void {
+  safeWriteStorage(STORAGE_SCHEDULE_DRAFT_KEY, JSON.stringify(draft));
+}
+
+function pickComposeDraftFromStore(state: {
+  productName: string;
+  postType: string;
+  brief: string;
+  tone: string;
+  hasCeloPayment: boolean;
+  price: string;
+  currency: string;
+  generatedCaption: string;
+  captionDraft: string;
+}): ComposeDraftState {
+  return {
+    productName: state.productName,
+    postType: state.postType,
+    brief: state.brief,
+    tone: state.tone,
+    hasCeloPayment: state.hasCeloPayment,
+    price: state.price,
+    currency: state.currency,
+    generatedCaption: state.generatedCaption,
+    captionDraft: state.captionDraft,
+  };
+}
+
+function pickScheduleDraftFromStore(state: {
+  sendTime: string;
+  customDateTime: string;
+  repeat: "one-time" | "daily" | "weekly" | "monthly";
+  targets: string[];
+  selectedGroups: string[];
+}): ScheduleDraftState {
+  return {
+    sendTime: state.sendTime,
+    customDateTime: state.customDateTime,
+    repeat: state.repeat,
+    targets: state.targets,
+    selectedGroups: state.selectedGroups,
+  };
+}
+
+function loadPosts(): ScheduledPost[] {
+  const parsed = parseJson<unknown[]>(safeReadStorage(STORAGE_POSTS_KEY), []);
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((entry): entry is Record<string, unknown> => {
+      return Boolean(entry && typeof entry === "object");
+    })
+    .map((entry) => ({
+      id: String(entry.id || ""),
+      photos: Array.isArray(entry.photos)
+        ? entry.photos.map((value) => String(value || "")).filter(Boolean)
+        : [],
+      productName: String(entry.productName || ""),
+      postType: String(entry.postType || ""),
+      brief: String(entry.brief || ""),
+      tone: String(entry.tone || ""),
+      caption: String(entry.caption || ""),
+      templateName:
+        typeof entry.templateName === "string" ? entry.templateName : undefined,
+      templateLanguageCode:
+        typeof entry.templateLanguageCode === "string"
+          ? entry.templateLanguageCode
+          : undefined,
+      templateBodyParameters: Array.isArray(entry.templateBodyParameters)
+        ? entry.templateBodyParameters
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        : undefined,
+      templateHeaderImageUrl:
+        typeof entry.templateHeaderImageUrl === "string"
+          ? entry.templateHeaderImageUrl
+          : undefined,
+      hasCeloPayment: Boolean(entry.hasCeloPayment),
+      price: String(entry.price || ""),
+      currency: String(entry.currency || "cUSD"),
+      waAccount: String(entry.waAccount || ""),
+      sendTime: String(entry.sendTime || ""),
+      repeat:
+        entry.repeat === "daily" ||
+        entry.repeat === "weekly" ||
+        entry.repeat === "monthly"
+          ? entry.repeat
+          : "one-time",
+      targets: Array.isArray(entry.targets)
+        ? entry.targets.map((value) => String(value || "")).filter(Boolean)
+        : [],
+      groups: Array.isArray(entry.groups)
+        ? entry.groups.map((value) => String(value || "")).filter(Boolean)
+        : [],
+      status:
+        entry.status === "sent" || entry.status === "failed"
+          ? entry.status
+          : "upcoming",
+      createdAt: String(entry.createdAt || new Date().toISOString()),
+    }))
+    .filter((post) => Boolean(post.id));
+}
+
+function persistPosts(posts: ScheduledPost[]): void {
+  safeWriteStorage(STORAGE_POSTS_KEY, JSON.stringify(posts));
+}
+
+function loadTransactions(): CeloTransaction[] {
+  const parsed = parseJson<unknown[]>(
+    safeReadStorage(STORAGE_TRANSACTIONS_KEY),
+    [],
+  );
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((entry): entry is Record<string, unknown> => {
+      return Boolean(entry && typeof entry === "object");
+    })
+    .map((entry) => ({
+      id: String(entry.id || ""),
+      txHash: String(entry.txHash || ""),
+      buyer: String(entry.buyer || ""),
+      productName: String(entry.productName || "Payment"),
+      amount: String(entry.amount || "0"),
+      currency: String(entry.currency || "cUSD"),
+      escrowStatus:
+        entry.escrowStatus === "confirmed" || entry.escrowStatus === "refunded"
+          ? entry.escrowStatus
+          : "pending",
+      timestamp: String(entry.timestamp || new Date().toISOString()),
+    }))
+    .filter((tx) => Boolean(tx.id || tx.txHash));
+}
+
+function persistTransactions(transactions: CeloTransaction[]): void {
+  safeWriteStorage(STORAGE_TRANSACTIONS_KEY, JSON.stringify(transactions));
+}
+
 function resolveInitialSelectedAccount(accounts: WAAccount[]): string {
   const stored = loadSelectedAccount();
   if (stored && accounts.some((account) => account.id === stored)) {
@@ -284,28 +496,32 @@ function resolveInitialSelectedAccount(accounts: WAAccount[]): string {
 const initialWaAccounts = loadWaAccounts();
 const initialSelectedAccount = resolveInitialSelectedAccount(initialWaAccounts);
 const initialPhotos = loadPhotosForAccount(initialSelectedAccount);
+const initialComposeDraft = loadComposeDraft();
+const initialScheduleDraft = loadScheduleDraft();
+const initialPosts = loadPosts();
+const initialTransactions = loadTransactions();
 
 export const useEazeeStore = create<EazeeStore>((set) => ({
   photos: initialPhotos,
-  productName: "",
-  postType: "",
-  brief: "",
-  tone: "",
-  hasCeloPayment: false,
-  price: "",
-  currency: "cUSD",
-  generatedCaption: "",
-  captionDraft: "",
+  productName: initialComposeDraft.productName,
+  postType: initialComposeDraft.postType,
+  brief: initialComposeDraft.brief,
+  tone: initialComposeDraft.tone,
+  hasCeloPayment: initialComposeDraft.hasCeloPayment,
+  price: initialComposeDraft.price,
+  currency: initialComposeDraft.currency,
+  generatedCaption: initialComposeDraft.generatedCaption,
+  captionDraft: initialComposeDraft.captionDraft,
   isGenerating: false,
   selectedAccount: initialSelectedAccount,
-  sendTime: "",
-  customDateTime: "",
-  repeat: "one-time",
-  targets: [],
-  selectedGroups: [],
-  posts: [],
+  sendTime: initialScheduleDraft.sendTime,
+  customDateTime: initialScheduleDraft.customDateTime,
+  repeat: initialScheduleDraft.repeat,
+  targets: initialScheduleDraft.targets,
+  selectedGroups: initialScheduleDraft.selectedGroups,
+  posts: initialPosts,
   editingPostId: null,
-  transactions: [],
+  transactions: initialTransactions,
   waAccounts: initialWaAccounts,
 
   setPhotos: (photos) =>
@@ -325,15 +541,60 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
       persistPhotosForAccount(s.selectedAccount, photos);
       return { photos };
     }),
-  setProductName: (productName) => set({ productName }),
-  setPostType: (postType) => set({ postType }),
-  setBrief: (brief) => set({ brief }),
-  setTone: (tone) => set({ tone }),
-  setHasCeloPayment: (hasCeloPayment) => set({ hasCeloPayment }),
-  setPrice: (price) => set({ price }),
-  setCurrency: (currency) => set({ currency }),
-  setGeneratedCaption: (generatedCaption) => set({ generatedCaption }),
-  setCaptionDraft: (captionDraft) => set({ captionDraft }),
+  setProductName: (productName) =>
+    set((s) => {
+      const nextState = { ...s, productName };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { productName };
+    }),
+  setPostType: (postType) =>
+    set((s) => {
+      const nextState = { ...s, postType };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { postType };
+    }),
+  setBrief: (brief) =>
+    set((s) => {
+      const nextState = { ...s, brief };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { brief };
+    }),
+  setTone: (tone) =>
+    set((s) => {
+      const nextState = { ...s, tone };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { tone };
+    }),
+  setHasCeloPayment: (hasCeloPayment) =>
+    set((s) => {
+      const nextState = { ...s, hasCeloPayment };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { hasCeloPayment };
+    }),
+  setPrice: (price) =>
+    set((s) => {
+      const nextState = { ...s, price };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { price };
+    }),
+  setCurrency: (currency) =>
+    set((s) => {
+      const nextState = { ...s, currency };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { currency };
+    }),
+  setGeneratedCaption: (generatedCaption) =>
+    set((s) => {
+      const nextState = { ...s, generatedCaption };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { generatedCaption };
+    }),
+  setCaptionDraft: (captionDraft) =>
+    set((s) => {
+      const nextState = { ...s, captionDraft };
+      persistComposeDraft(pickComposeDraftFromStore(nextState));
+      return { captionDraft };
+    }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setSelectedAccount: (selectedAccount) =>
     set(() => {
@@ -343,11 +604,36 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
         photos: loadPhotosForAccount(selectedAccount),
       };
     }),
-  setSendTime: (sendTime) => set({ sendTime }),
-  setCustomDateTime: (customDateTime) => set({ customDateTime }),
-  setRepeat: (repeat) => set({ repeat }),
-  setTargets: (targets) => set({ targets }),
-  setSelectedGroups: (selectedGroups) => set({ selectedGroups }),
+  setSendTime: (sendTime) =>
+    set((s) => {
+      const nextState = { ...s, sendTime };
+      persistScheduleDraft(pickScheduleDraftFromStore(nextState));
+      return { sendTime };
+    }),
+  setCustomDateTime: (customDateTime) =>
+    set((s) => {
+      const nextState = { ...s, customDateTime };
+      persistScheduleDraft(pickScheduleDraftFromStore(nextState));
+      return { customDateTime };
+    }),
+  setRepeat: (repeat) =>
+    set((s) => {
+      const nextState = { ...s, repeat };
+      persistScheduleDraft(pickScheduleDraftFromStore(nextState));
+      return { repeat };
+    }),
+  setTargets: (targets) =>
+    set((s) => {
+      const nextState = { ...s, targets };
+      persistScheduleDraft(pickScheduleDraftFromStore(nextState));
+      return { targets };
+    }),
+  setSelectedGroups: (selectedGroups) =>
+    set((s) => {
+      const nextState = { ...s, selectedGroups };
+      persistScheduleDraft(pickScheduleDraftFromStore(nextState));
+      return { selectedGroups };
+    }),
   addWAAccount: ({ label, number }) => {
     const id = `wa-${Date.now()}`;
     set((s) => {
@@ -363,22 +649,41 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
     });
     return id;
   },
-  addPost: (post) => set((s) => ({ posts: [post, ...s.posts] })),
+  setPosts: (posts) =>
+    set(() => {
+      persistPosts(posts);
+      return { posts };
+    }),
+  addPost: (post) =>
+    set((s) => {
+      const posts = [post, ...s.posts];
+      persistPosts(posts);
+      return { posts };
+    }),
   savePost: (post) =>
     set((s) => {
       const exists = s.posts.some((item) => item.id === post.id);
+      const posts = exists
+        ? s.posts.map((item) => (item.id === post.id ? post : item))
+        : [post, ...s.posts];
+
+      persistPosts(posts);
+
       return {
-        posts: exists
-          ? s.posts.map((item) => (item.id === post.id ? post : item))
-          : [post, ...s.posts],
+        posts,
         editingPostId: null,
       };
     }),
   removePost: (id) =>
-    set((s) => ({
-      posts: s.posts.filter((post) => post.id !== id),
-      editingPostId: s.editingPostId === id ? null : s.editingPostId,
-    })),
+    set((s) => {
+      const posts = s.posts.filter((post) => post.id !== id);
+      persistPosts(posts);
+
+      return {
+        posts,
+        editingPostId: s.editingPostId === id ? null : s.editingPostId,
+      };
+    }),
   startEditingPost: (id) =>
     set((s) => {
       const post = s.posts.find((item) => item.id === id);
@@ -386,33 +691,74 @@ export const useEazeeStore = create<EazeeStore>((set) => ({
         return s;
       }
 
-      return {
-        editingPostId: id,
+      const composeDraft: ComposeDraftState = {
         productName: post.productName,
         postType: post.postType,
         brief: post.brief,
         tone: post.tone,
-        generatedCaption: post.caption,
-        captionDraft: post.caption,
         hasCeloPayment: post.hasCeloPayment,
         price: post.price,
         currency: post.currency,
-        selectedAccount: post.waAccount,
-        photos: loadPhotosForAccount(post.waAccount),
+        generatedCaption: post.caption,
+        captionDraft: post.caption,
+      };
+      const scheduleDraft: ScheduleDraftState = {
         sendTime: post.sendTime,
         customDateTime: "",
         repeat: post.repeat,
         targets: post.targets,
         selectedGroups: post.groups,
       };
+
+      persistComposeDraft(composeDraft);
+      persistScheduleDraft(scheduleDraft);
+
+      return {
+        editingPostId: id,
+        productName: composeDraft.productName,
+        postType: composeDraft.postType,
+        brief: composeDraft.brief,
+        tone: composeDraft.tone,
+        generatedCaption: composeDraft.generatedCaption,
+        captionDraft: composeDraft.captionDraft,
+        hasCeloPayment: composeDraft.hasCeloPayment,
+        price: composeDraft.price,
+        currency: composeDraft.currency,
+        selectedAccount: post.waAccount,
+        photos: loadPhotosForAccount(post.waAccount),
+        sendTime: scheduleDraft.sendTime,
+        customDateTime: scheduleDraft.customDateTime,
+        repeat: scheduleDraft.repeat,
+        targets: scheduleDraft.targets,
+        selectedGroups: scheduleDraft.selectedGroups,
+      };
     }),
   clearEditingPost: () => set({ editingPostId: null }),
   addTransaction: (tx) =>
-    set((s) => ({ transactions: [tx, ...s.transactions] })),
-  setTransactions: (transactions) => set({ transactions }),
+    set((s) => {
+      const transactions = [tx, ...s.transactions];
+      persistTransactions(transactions);
+      return { transactions };
+    }),
+  setTransactions: (transactions) =>
+    set(() => {
+      persistTransactions(transactions);
+      return { transactions };
+    }),
   resetCompose: () =>
     set((s) => {
       persistPhotosForAccount(s.selectedAccount, []);
+      persistComposeDraft({
+        productName: "",
+        postType: "",
+        brief: "",
+        tone: "",
+        hasCeloPayment: false,
+        price: "",
+        currency: "cUSD",
+        generatedCaption: "",
+        captionDraft: "",
+      });
 
       return {
         photos: [],
