@@ -132,6 +132,26 @@ export async function POST(request: Request) {
 
     console.log(`✅ Scheduled job ${job.id} for ${job.scheduledFor}`);
 
+    const scheduledTimestamp = Date.parse(job.scheduledFor);
+    if (
+      Number.isFinite(scheduledTimestamp) &&
+      scheduledTimestamp <= Date.now() + 15_000
+    ) {
+      const dispatchUrl = new URL("/api/whatsapp/dispatch-due", request.url);
+      const cronSecret = process.env.CRON_SECRET?.trim() || "";
+
+      void fetch(dispatchUrl.toString(), {
+        method: "POST",
+        headers: cronSecret
+          ? {
+              Authorization: `Bearer ${cronSecret}`,
+            }
+          : undefined,
+      }).catch((dispatchError) => {
+        console.error("Immediate dispatch trigger failed:", dispatchError);
+      });
+    }
+
     return NextResponse.json({
       success: true,
       jobId: job.id,
@@ -224,6 +244,14 @@ function normalizeTargets(
 }
 
 function buildScheduledDate(sendTime: string): string {
+  if (
+    String(sendTime || "")
+      .trim()
+      .toLowerCase() === "now"
+  ) {
+    return new Date().toISOString();
+  }
+
   if (sendTime.includes("T")) return sendTime;
 
   const [hours] = sendTime.split(":");

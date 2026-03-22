@@ -728,6 +728,9 @@ export default function SchedulePage() {
   const [newAccountNumber, setNewAccountNumber] = useState("");
   const [newAccountNumberError, setNewAccountNumberError] = useState("");
   const [timeMode, setTimeMode] = useState<"ai" | "custom">("ai");
+  const [customSendMode, setCustomSendMode] = useState<"datetime" | "now">(
+    "datetime",
+  );
   const [isLoadingSuggestedTimes, setIsLoadingSuggestedTimes] = useState(false);
   const [fetchedRecommendedTimes, setFetchedRecommendedTimes] = useState<
     string[]
@@ -796,7 +799,11 @@ export default function SchedulePage() {
 
   const canSchedule =
     selectedAccount &&
-    (timeMode === "custom" ? customDateTime : sendTime) &&
+    (timeMode === "custom"
+      ? customSendMode === "now"
+        ? "now"
+        : customDateTime
+      : sendTime) &&
     targets.length > 0 &&
     (!targets.includes("groups") || selectedGroups.length > 0) &&
     (!showTemplateFallbackSection ||
@@ -1173,7 +1180,11 @@ export default function SchedulePage() {
         : undefined;
 
       const resolvedSendTime =
-        timeMode === "custom" ? customDateTime : sendTime;
+        timeMode === "custom"
+          ? customSendMode === "now"
+            ? "now"
+            : customDateTime
+          : sendTime;
 
       const targetRecipients = buildTargetRecipients(
         targets,
@@ -2267,7 +2278,9 @@ export default function SchedulePage() {
                   <Sparkles className="w-3 h-3" /> Smart Suggest
                 </button>
                 <button
-                  onClick={() => setTimeMode("custom")}
+                  onClick={() => {
+                    setTimeMode("custom");
+                  }}
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all",
                     timeMode === "custom"
@@ -2375,11 +2388,69 @@ export default function SchedulePage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
               >
+                <div className="mb-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCustomSendMode("datetime")}
+                    className="px-3 py-2 rounded-lg border text-xs font-semibold transition-all"
+                    style={{
+                      borderColor:
+                        customSendMode === "datetime"
+                          ? "var(--brand-green)"
+                          : "var(--border)",
+                      color:
+                        customSendMode === "datetime"
+                          ? "var(--brand-dark)"
+                          : "var(--text-secondary)",
+                      background:
+                        customSendMode === "datetime"
+                          ? "var(--brand-dim)"
+                          : "var(--bg-elevated)",
+                    }}
+                  >
+                    Pick date & time
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomSendMode("now")}
+                    className="px-3 py-2 rounded-lg border text-xs font-semibold transition-all"
+                    style={{
+                      borderColor:
+                        customSendMode === "now"
+                          ? "var(--brand-green)"
+                          : "var(--border)",
+                      color:
+                        customSendMode === "now"
+                          ? "var(--brand-dark)"
+                          : "var(--text-secondary)",
+                      background:
+                        customSendMode === "now"
+                          ? "var(--brand-dim)"
+                          : "var(--bg-elevated)",
+                    }}
+                  >
+                    Post now
+                  </button>
+                </div>
+
+                {customSendMode === "now" && (
+                  <p
+                    className="mb-3 text-[11px]"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Sends immediately after you confirm schedule.
+                  </p>
+                )}
+
                 <input
                   type="datetime-local"
                   value={customDateTime}
-                  onChange={(event) => setCustomDateTime(event.target.value)}
+                  onChange={(event) => {
+                    setCustomDateTime(event.target.value);
+                    setCustomSendMode("datetime");
+                  }}
                   className="input-base"
+                  disabled={customSendMode === "now"}
                 />
               </motion.div>
             )}

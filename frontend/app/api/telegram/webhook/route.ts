@@ -32,7 +32,13 @@ const telegramMiniAppUrl =
   process.env.NEXT_PUBLIC_APP_URL?.trim() ||
   "";
 
-type CommandName = "start" | "create" | "dashboard" | "help" | "status";
+type CommandName =
+  | "start"
+  | "create"
+  | "dashboard"
+  | "schedules"
+  | "help"
+  | "status";
 
 const EXTRA_SUPPORTED_COMMANDS = ["/start_bind_<token>", "/link <token>"];
 
@@ -40,6 +46,7 @@ const SUPPORTED_COMMANDS: CommandName[] = [
   "start",
   "create",
   "dashboard",
+  "schedules",
   "help",
   "status",
 ];
@@ -145,8 +152,28 @@ function getCommandFromCallbackData(callbackData: string): CommandName | null {
   if (normalized === "nav:start") return "start";
   if (normalized === "nav:create") return "create";
   if (normalized === "nav:dashboard") return "dashboard";
+  if (normalized === "nav:schedules") return "schedules";
   if (normalized === "nav:help") return "help";
   return null;
+}
+
+function parseSchedulesPageFromText(text: string): number {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return 1;
+  }
+
+  const tokens = normalized.split(/\s+/);
+  if (tokens.length < 2) {
+    return 1;
+  }
+
+  const parsed = Number.parseInt(tokens[1] || "1", 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+
+  return parsed;
 }
 
 function buildMiniAppUrl(pathname = "/"): string | null {
@@ -271,6 +298,64 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
   ].join("\n");
 }
 
+async function buildSchedulesText(
+  chatId: string,
+  requestedPage: number,
+): Promise<string> {
+  const binding = await getTelegramBindingByChatId(chatId);
+  if (!binding?.walletAddress) {
+    return [
+      "📅 Schedules",
+      "Link your wallet first to view your schedule list.",
+      "",
+      "Run /link <token> then /schedules",
+    ].join("\n");
+  }
+
+  const jobs = await listWhatsAppJobsByOwner({
+    chatId,
+    walletAddress: binding.walletAddress,
+    limit: 100,
+  });
+
+  if (jobs.length === 0) {
+    return [
+      "📅 Schedules",
+      "No schedules found yet.",
+      "",
+      "Create one from the mini app and run /schedules again.",
+    ].join("\n");
+  }
+
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil(jobs.length / pageSize));
+  const page = Math.min(Math.max(1, requestedPage), totalPages);
+  const startIndex = (page - 1) * pageSize;
+  const pageJobs = jobs.slice(startIndex, startIndex + pageSize);
+
+  const lines = pageJobs.map((job, index) => {
+    const scheduleTime = new Date(job.scheduledFor).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const recipientCount = Array.isArray(job.targets) ? job.targets.length : 0;
+
+    return `${startIndex + index + 1}. ${job.postType || "post"} • ${job.status} • ${scheduleTime} • ${recipientCount} target${recipientCount === 1 ? "" : "s"}`;
+  });
+
+  return [
+    "📅 Your schedules",
+    `Wallet: ${binding.walletAddress}`,
+    `Page ${page}/${totalPages} • Total ${jobs.length}`,
+    "",
+    ...lines,
+    "",
+    "Use /schedules <page> (example: /schedules 2)",
+  ].join("\n");
+}
+
 function isAuthorizedWebhookRequest(request: Request): boolean {
   if (!telegramWebhookSecret) {
     return true;
@@ -348,6 +433,8 @@ async function handleInboundCommand(
           "✅ Wallet linked successfully.",
           `Wallet: ${confirmation.binding.walletAddress}`,
           "You can now schedule and track posts from this Telegram chat.",
+          "",
+          await buildDashboardSummaryText(chatId),
         ].join("\n")
       : [
           "❌ Could not link wallet from this start link.",
@@ -404,6 +491,8 @@ async function handleInboundCommand(
             "✅ Wallet linked successfully.",
             `Wallet: ${confirmation.binding.walletAddress}`,
             "You can now schedule and track posts from this Telegram chat.",
+            "",
+            await buildDashboardSummaryText(chatId),
           ].join("\n")
         : [
             "❌ Could not link wallet from this start link.",
@@ -430,6 +519,12 @@ async function handleInboundCommand(
   } else if (normalizedCommand === "dashboard") {
     replyText = await buildDashboardSummaryText(chatId);
     replyMarkup = createDashboardKeyboard();
+  } else if (normalizedCommand === "schedules") {
+    replyText = await buildSchedulesText(
+      chatId,
+      parseSchedulesPageFromText(text),
+    );
+    replyMarkup = createDashboardKeyboard();
   } else if (normalizedCommand === "help") {
     replyText = [
       "Eazee Telegram Bot Commands:",
@@ -438,6 +533,7 @@ async function handleInboundCommand(
       "/link <token> - Link wallet using token from app",
       "/create - Open content creation flow",
       "/dashboard - Open dashboard actions",
+      "/schedules <page> - View schedules with paging",
       "/help - Show available commands",
       "/status - Show bot + webhook status",
       "",
@@ -580,6 +676,8 @@ async function handleBindCommand(
         "✅ Wallet linked successfully.",
         `Wallet: ${confirmation.binding.walletAddress}`,
         "You can now schedule and track posts from this Telegram chat.",
+        "",
+        await buildDashboardSummaryText(normalizedChatId),
       ].join("\n")
     : [
         "❌ Could not link wallet.",

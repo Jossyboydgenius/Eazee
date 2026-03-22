@@ -28,18 +28,33 @@ Authorization: Bearer <CRON_SECRET>
   "crons": [
     {
       "path": "/api/whatsapp/dispatch-due",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }
 ```
 
-This runs every 5 minutes.
+This runs once daily at 09:00 UTC (Hobby-compatible).
 
-If you need faster dispatch in production (for example every 1 minute):
+If you need more frequent dispatch in production:
 
 - Upgrade Vercel plan and use a more frequent cron expression, or
 - Use an external scheduler (GitHub Actions, cron-job.org, etc.) to call `POST /api/whatsapp/dispatch-due` with `Authorization: Bearer <CRON_SECRET>`.
+
+## GitHub Actions fallback (works on Hobby)
+
+This repository includes `.github/workflows/dispatch-due.yml` with a 5-minute schedule.
+
+Set these GitHub repository secrets:
+
+- `EAZEE_DISPATCH_URL` → `https://<your-domain>/api/whatsapp/dispatch-due`
+- `CRON_SECRET` → same value used in your app environment
+
+Once secrets are set, GitHub Actions can trigger due dispatch every 5 minutes even when Vercel cron is limited to daily on Hobby.
+
+## Immediate sends on Hobby
+
+When a schedule is created with `sendTime: "now"`, the server triggers dispatch immediately after enqueueing, so users can test instant delivery without waiting for cron.
 
 ## 3) Why GET is used for cron
 

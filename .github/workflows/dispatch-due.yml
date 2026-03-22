@@ -1,0 +1,30 @@
+name: Dispatch Due Jobs
+
+on:
+    schedule:
+        - cron: "*/5 * * * *"
+    workflow_dispatch:
+
+jobs:
+    trigger-dispatch:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Trigger due-job dispatcher
+              env:
+                  DISPATCH_URL: ${{ secrets.EAZEE_DISPATCH_URL }}
+                  CRON_SECRET: ${{ secrets.CRON_SECRET }}
+              run: |
+                  if [ -z "$DISPATCH_URL" ]; then
+                    echo "EAZEE_DISPATCH_URL is not set" >&2
+                    exit 1
+                  fi
+
+                  if [ -z "$CRON_SECRET" ]; then
+                    echo "CRON_SECRET is not set" >&2
+                    exit 1
+                  fi
+
+                  curl --fail --show-error --silent \
+                    -X POST "$DISPATCH_URL" \
+                    -H "Authorization: Bearer $CRON_SECRET" \
+                    -H "Content-Type: application/json"

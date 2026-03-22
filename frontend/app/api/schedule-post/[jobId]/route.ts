@@ -78,6 +78,14 @@ function normalizeTargets(
 }
 
 function buildScheduledDate(sendTime: string): string {
+  if (
+    String(sendTime || "")
+      .trim()
+      .toLowerCase() === "now"
+  ) {
+    return new Date().toISOString();
+  }
+
   if (sendTime.includes("T")) return sendTime;
 
   const [hours] = sendTime.split(":");
@@ -239,6 +247,26 @@ export async function PATCH(
 
     if (!updated) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    }
+
+    const scheduledTimestamp = Date.parse(updated.scheduledFor);
+    if (
+      Number.isFinite(scheduledTimestamp) &&
+      scheduledTimestamp <= Date.now() + 15_000
+    ) {
+      const dispatchUrl = new URL("/api/whatsapp/dispatch-due", request.url);
+      const cronSecret = process.env.CRON_SECRET?.trim() || "";
+
+      void fetch(dispatchUrl.toString(), {
+        method: "POST",
+        headers: cronSecret
+          ? {
+              Authorization: `Bearer ${cronSecret}`,
+            }
+          : undefined,
+      }).catch((dispatchError) => {
+        console.error("Immediate dispatch trigger failed:", dispatchError);
+      });
     }
 
     return NextResponse.json({
