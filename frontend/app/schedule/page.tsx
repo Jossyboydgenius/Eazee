@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useActiveAccount } from "thirdweb/react";
 import { useEazeeStore, type ScheduledPost } from "@/lib/store";
 import { useRouter } from "next/navigation";
 import Image, { type StaticImageData } from "next/image";
@@ -94,6 +95,7 @@ const TEMPLATE_LANGUAGE_OPTIONS = [
 ];
 const TEMPLATE_FALLBACK_STORAGE_KEY = "eazee-template-fallback-by-account";
 const GROUP_DIRECTORY_STORAGE_KEY = "eazee-groups-by-account";
+const WALLET_SESSION_STORAGE_KEY = "eazee-wallet-session";
 const DEFAULT_TEMPLATE_FALLBACK_ACCOUNT_KEY = "__default__";
 
 interface TemplateFallbackDraft {
@@ -117,6 +119,12 @@ interface AllowlistChecklistState {
   recipient: string;
   templateName: string;
   graphErrorCode?: number;
+}
+
+interface WalletSessionCacheRecord {
+  token: string;
+  walletAddress: string;
+  expiresAt: string;
 }
 
 type GroupDirectoryByAccount = Record<string, GroupOption[]>;
@@ -205,6 +213,63 @@ function writeGroupDirectoryByAccount(
       GROUP_DIRECTORY_STORAGE_KEY,
       JSON.stringify(groupsByAccount),
     );
+  } catch {
+    // Ignore localStorage write failures.
+  }
+}
+
+function readWalletSessionCache(): WalletSessionCacheRecord | null {
+  if (!canUseBrowserStorage()) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WALLET_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<WalletSessionCacheRecord>;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.token !== "string" ||
+      typeof parsed.walletAddress !== "string" ||
+      typeof parsed.expiresAt !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      token: parsed.token.trim(),
+      walletAddress: parsed.walletAddress.trim().toLowerCase(),
+      expiresAt: parsed.expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeWalletSessionCache(session: WalletSessionCacheRecord): void {
+  if (!canUseBrowserStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      WALLET_SESSION_STORAGE_KEY,
+      JSON.stringify(session),
+    );
+  } catch {
+    // Ignore localStorage write failures.
+  }
+}
+
+function clearWalletSessionCache(): void {
+  if (!canUseBrowserStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(WALLET_SESSION_STORAGE_KEY);
   } catch {
     // Ignore localStorage write failures.
   }
@@ -609,6 +674,7 @@ function StepHeader({
 }
 
 export default function SchedulePage() {
+  const activeAccount = useActiveAccount();
   const router = useRouter();
   const {
     waAccounts,
@@ -661,6 +727,7 @@ export default function SchedulePage() {
   const [availableGroups, setAvailableGroups] = useState<GroupOption[]>([]);
   const [isImportingGroups, setIsImportingGroups] = useState(false);
   const [isSendingTemplateTest, setIsSendingTemplateTest] = useState(false);
+  const [isBindingWallet, setIsBindingWallet] = useState(false);
   const [allowlistChecklist, setAllowlistChecklist] =
     useState<AllowlistChecklistState | null>(null);
   const scheduleSubmitLockRef = useRef(false);
@@ -671,6 +738,9 @@ export default function SchedulePage() {
   const selectedAccountObj = waAccounts.find(
     (account) => account.id === selectedAccount,
   );
+  const ownerChatId = isTelegramProvider
+    ? selectedAccountObj?.number?.trim() || ""
+    : "";
   const captionSource =
     captionDraft.trim() || generatedCaption.trim() || brief.trim();
   const postReadyCaption = captionSource
@@ -898,6 +968,121 @@ export default function SchedulePage() {
     setIsScheduling(true);
 
     try {
+      const ensureWalletSessionToken = async (): Promise<string | null> => {
+        if (!activeAccount?.address) {
+          return null;
+        }
+
+        const walletAddress = activeAccount.address.trim().toLowerCase();
+        const cachedSession = readWalletSessionCache();
+
+        if (
+          cachedSession?.token &&
+          cachedSession.walletAddress === walletAddress &&
+          Number.isFinite(Date.parse(cachedSession.expiresAt)) &&
+          Date.parse(cachedSession.expiresAt) > Date.now() + 30_000
+        ) {
+          return cachedSession.token;
+        }
+
+        if (!isTelegramProvider) {
+          return null;
+        }
+
+        if (!ownerChatId) {
+          throw new Error(
+            "Select a Telegram destination chat first so wallet binding can be initialized.",
+          );
+        }
+
+        setIsBindingWallet(true);
+
+        try {
+          const challengeResponse = await fetch("/api/telegram/bind", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "challenge",
+              walletAddress,
+              chatId: ownerChatId,
+            }),
+          });
+
+          const challengeResult = await challengeResponse
+            .json()
+            .catch(() => ({}));
+          if (!challengeResponse.ok || !challengeResult?.challenge?.message) {
+            throw new Error(
+              typeof challengeResult?.error === "string"
+                ? challengeResult.error
+                : "Failed to create wallet auth challenge",
+            );
+          }
+
+          const signature = await activeAccount.signMessage({
+            message: String(challengeResult.challenge.message),
+          });
+
+          const requestResponse = await fetch("/api/telegram/bind", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "request",
+              chatId: ownerChatId,
+              walletAddress,
+              nonce: String(challengeResult.challenge.nonce || ""),
+              signature,
+            }),
+          });
+
+          const requestResult = await requestResponse.json().catch(() => ({}));
+          if (!requestResponse.ok) {
+            throw new Error(
+              typeof requestResult?.error === "string"
+                ? requestResult.error
+                : "Failed to request Telegram bind token",
+            );
+          }
+
+          const walletSessionToken =
+            typeof requestResult?.walletSessionToken === "string" &&
+            requestResult.walletSessionToken.trim()
+              ? requestResult.walletSessionToken.trim()
+              : "";
+          const walletSessionExpiresAt =
+            typeof requestResult?.walletSessionExpiresAt === "string"
+              ? requestResult.walletSessionExpiresAt
+              : "";
+
+          if (walletSessionToken && walletSessionExpiresAt) {
+            writeWalletSessionCache({
+              token: walletSessionToken,
+              walletAddress,
+              expiresAt: walletSessionExpiresAt,
+            });
+          }
+
+          if (typeof requestResult?.token === "string" && requestResult.token) {
+            toast({
+              title: "Telegram link token ready",
+              description:
+                "Send /link <token> in your Telegram bot chat to complete wallet binding.",
+              variant: "info",
+            });
+          }
+
+          return walletSessionToken || null;
+        } finally {
+          setIsBindingWallet(false);
+        }
+      };
+
+      const walletSessionToken = await ensureWalletSessionToken();
+
       const {
         photos,
         productName,
@@ -928,6 +1113,9 @@ export default function SchedulePage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(walletSessionToken
+            ? { Authorization: `Bearer ${walletSessionToken}` }
+            : {}),
         },
         body: JSON.stringify({
           caption: captionSource,
@@ -962,6 +1150,8 @@ export default function SchedulePage() {
           targets,
           groups: selectedGroups,
           targetRecipients,
+          ownerChatId: ownerChatId || undefined,
+          ownerWalletAddress: activeAccount?.address || undefined,
         }),
       });
 
@@ -1050,10 +1240,15 @@ export default function SchedulePage() {
 
       router.push(`/dashboard?${searchParams.toString()}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "";
+      if (/unauthorized|session|token/i.test(errorMessage)) {
+        clearWalletSessionCache();
+      }
+
       console.error(error);
       toast({
         title: "Scheduling failed",
-        description: "Please try again.",
+        description: errorMessage || "Please try again.",
         variant: "error",
       });
     } finally {
@@ -2377,18 +2572,18 @@ export default function SchedulePage() {
         <motion.div variants={item}>
           <button
             onClick={handleSchedule}
-            disabled={!canSchedule || isScheduling}
+            disabled={!canSchedule || isScheduling || isBindingWallet}
             className="btn-brand w-full py-4 text-base"
             style={{ opacity: canSchedule ? 1 : 0.55 }}
           >
-            {isScheduling ? (
+            {isScheduling || isBindingWallet ? (
               <>
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                   className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
                 />
-                Scheduling...
+                {isBindingWallet ? "Binding wallet..." : "Scheduling..."}
               </>
             ) : editingPostId ? (
               "Confirm Edit & Re-schedule"
