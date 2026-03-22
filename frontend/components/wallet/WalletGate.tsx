@@ -43,13 +43,13 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
       style={{ background: "var(--bg-primary)" }}
     >
       <div className="glass-card w-full max-w-xl p-6 sm:p-7 text-center">
-        <div className="flex items-center justify-center mb-3">
+        <div className="flex items-center justify-center">
           <Image
             src={appLogo}
             alt=""
             width={320}
             height={92}
-            className="w-[176px] sm:w-[208px] h-auto object-contain object-center"
+            className="w-[116px] sm:w-[112px] h-auto object-contain object-center"
           />
         </div>
 
