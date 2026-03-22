@@ -34,7 +34,7 @@ const telegramMiniAppUrl =
 
 type CommandName = "start" | "create" | "dashboard" | "help" | "status";
 
-const EXTRA_SUPPORTED_COMMANDS = ["/link <token>"];
+const EXTRA_SUPPORTED_COMMANDS = ["/start_bind_<token>", "/link <token>"];
 
 const SUPPORTED_COMMANDS: CommandName[] = [
   "start",
@@ -194,7 +194,7 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
     listWhatsAppJobsByOwner({
       chatId,
       walletAddress: binding.walletAddress,
-      limit: 5,
+      limit: 30,
     }),
     listDispatchReceiptsByOwner({
       chatId,
@@ -218,14 +218,15 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
     { queued: 0, processing: 0, sent: 0, failed: 0 },
   );
 
-  const recentScheduleLines = jobs.slice(0, 3).map((job, index) => {
+  const recentScheduleLines = jobs.slice(0, 20).map((job, index) => {
     const scheduleTime = new Date(job.scheduledFor).toLocaleString("en-US", {
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
     });
-    return `${index + 1}. ${job.postType || "post"} • ${job.status} • ${scheduleTime}`;
+    const recipientCount = Array.isArray(job.targets) ? job.targets.length : 0;
+    return `${index + 1}. ${job.postType || "post"} • ${job.status} • ${scheduleTime} • ${recipientCount} target${recipientCount === 1 ? "" : "s"}`;
   });
 
   const recentPaymentLines = payments.slice(0, 3).map((payment, index) => {
@@ -248,9 +249,13 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
     `- Processing: ${statusSummary.processing}`,
     `- Sent: ${statusSummary.sent}`,
     `- Failed: ${statusSummary.failed}`,
+    `- Total posts: ${jobs.length}`,
     ...(recentScheduleLines.length > 0
-      ? ["Recent schedules:", ...recentScheduleLines]
-      : ["Recent schedules: none yet"]),
+      ? ["Your schedules (latest first):", ...recentScheduleLines]
+      : ["Your schedules: none yet"]),
+    jobs.length > 20
+      ? `Showing latest 20 of ${jobs.length}. Open dashboard for full list.`
+      : "",
     "",
     "Payments:",
     `- Recent records: ${payments.length}`,
@@ -299,6 +304,18 @@ function extractLinkTokenFromText(text: string): string {
   return String(tokens[1] || "").trim();
 }
 
+function extractBindTokenFromStartCommand(command: string): string {
+  const normalized = String(command || "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalized.startsWith("start_bind_")) {
+    return "";
+  }
+
+  return normalized.slice("start_bind_".length).trim();
+}
+
 async function handleInboundCommand(
   command: string,
   chatId: string,
@@ -316,7 +333,53 @@ async function handleInboundCommand(
     };
   }
 
-  const normalizedCommand = String(command).trim().toLowerCase() as CommandName;
+  const normalizedCommandRaw = String(command).trim().toLowerCase();
+  const startBindCommandToken =
+    extractBindTokenFromStartCommand(normalizedCommandRaw);
+
+  if (startBindCommandToken) {
+    const confirmation = await confirmTelegramBindingToken({
+      token: startBindCommandToken,
+      chatId,
+    });
+
+    const replyText = confirmation.ok
+      ? [
+          "✅ Wallet linked successfully.",
+          `Wallet: ${confirmation.binding.walletAddress}`,
+          "You can now schedule and track posts from this Telegram chat.",
+        ].join("\n")
+      : [
+          "❌ Could not link wallet from this start link.",
+          confirmation.error,
+          "Open Eazee app, request a new token, then run /link <token>.",
+        ].join("\n");
+
+    const sendResult = await sendTelegramTextMessage({
+      chatId,
+      text: replyText,
+      disableLinkPreview: true,
+      replyMarkup: createMainMenuKeyboard(),
+    });
+
+    if (!sendResult.ok) {
+      return {
+        handled: true,
+        replyMode: sendResult.mode,
+        error: sendResult.error || "Failed to send start_bind response",
+        action: "start_bind_send_failed",
+      };
+    }
+
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      action: confirmation.ok ? "start_bind_confirmed" : "start_bind_rejected",
+      error: confirmation.ok ? undefined : confirmation.error,
+    };
+  }
+
+  const normalizedCommand = normalizedCommandRaw as CommandName;
   if (!SUPPORTED_COMMANDS.includes(normalizedCommand)) {
     return {
       handled: false,
@@ -371,7 +434,7 @@ async function handleInboundCommand(
     replyText = [
       "Eazee Telegram Bot Commands:",
       "/start - Verify the bot is active",
-      "/start bind_<token> - Link wallet directly from app button",
+      "/start_bind_<token> - Link wallet directly from app button",
       "/link <token> - Link wallet using token from app",
       "/create - Open content creation flow",
       "/dashboard - Open dashboard actions",

@@ -346,6 +346,34 @@ function loadScheduleDraft(): ScheduleDraftState {
   };
 }
 
+function normalizeRepeatValue(
+  value: unknown,
+): ScheduledPost["repeat"] | ScheduleDraftState["repeat"] {
+  if (value === "daily" || value === "weekly" || value === "monthly") {
+    return value;
+  }
+
+  return "one-time";
+}
+
+function normalizeScheduledPostStatus(value: unknown): ScheduledPost["status"] {
+  if (value === "sent" || value === "failed") {
+    return value;
+  }
+
+  return "upcoming";
+}
+
+function normalizeEscrowStatus(
+  value: unknown,
+): CeloTransaction["escrowStatus"] {
+  if (value === "confirmed" || value === "refunded") {
+    return value;
+  }
+
+  return "pending";
+}
+
 function persistScheduleDraft(draft: ScheduleDraftState): void {
   safeWriteStorage(STORAGE_SCHEDULE_DRAFT_KEY, JSON.stringify(draft));
 }
@@ -428,22 +456,14 @@ function loadPosts(): ScheduledPost[] {
       currency: String(entry.currency || "cUSD"),
       waAccount: String(entry.waAccount || ""),
       sendTime: String(entry.sendTime || ""),
-      repeat:
-        entry.repeat === "daily" ||
-        entry.repeat === "weekly" ||
-        entry.repeat === "monthly"
-          ? entry.repeat
-          : "one-time",
+      repeat: normalizeRepeatValue(entry.repeat),
       targets: Array.isArray(entry.targets)
         ? entry.targets.map((value) => String(value || "")).filter(Boolean)
         : [],
       groups: Array.isArray(entry.groups)
         ? entry.groups.map((value) => String(value || "")).filter(Boolean)
         : [],
-      status:
-        entry.status === "sent" || entry.status === "failed"
-          ? entry.status
-          : "upcoming",
+      status: normalizeScheduledPostStatus(entry.status),
       createdAt: String(entry.createdAt || new Date().toISOString()),
     }))
     .filter((post) => Boolean(post.id));
@@ -471,10 +491,7 @@ function loadTransactions(): CeloTransaction[] {
       productName: String(entry.productName || "Payment"),
       amount: String(entry.amount || "0"),
       currency: String(entry.currency || "cUSD"),
-      escrowStatus:
-        entry.escrowStatus === "confirmed" || entry.escrowStatus === "refunded"
-          ? entry.escrowStatus
-          : "pending",
+      escrowStatus: normalizeEscrowStatus(entry.escrowStatus),
       timestamp: String(entry.timestamp || new Date().toISOString()),
     }))
     .filter((tx) => Boolean(tx.id || tx.txHash));
