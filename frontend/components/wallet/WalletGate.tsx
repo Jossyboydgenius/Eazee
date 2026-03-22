@@ -49,7 +49,7 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
             alt=""
             width={320}
             height={92}
-            className="w-[122px] sm:w-[144px] h-[36px] sm:h-[40px] object-contain object-center"
+            className="w-[176px] sm:w-[208px] h-auto object-contain object-center"
           />
         </div>
 
