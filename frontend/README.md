@@ -39,6 +39,7 @@ NEXT_PUBLIC_EAZEE_MESSAGING_PROVIDER=telegram
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_PARSE_MODE=
 TELEGRAM_BOT_USERNAME=eazee_dispatch_bot
+TELEGRAM_ALLOWED_DESTINATIONS=-1001234567890,@mychannel
 TELEGRAM_WEBHOOK_SECRET=optional_secret_for_webhook_header_validation
 TELEGRAM_MINI_APP_URL=https://your-domain.com
 TELEGRAM_POLLING_WEBHOOK_URL=http://localhost:3000/api/telegram/webhook
@@ -202,6 +203,8 @@ Cron notes:
 - Set `TELEGRAM_BOT_USERNAME` (example: `eazee_dispatch_bot`) for command mention handling.
 - Set `TELEGRAM_MINI_APP_URL` so inline keyboard includes the Web App button.
 - In Schedule, add account destinations as Telegram `chat_id` values (e.g. `-1001234567890`) or usernames (e.g. `@mychannel`).
+- Destination policy is dynamic: outbound sends are allowed for destinations discovered from linked Telegram chats, webhook sessions, and scheduled target recipients.
+- Optional override: add `TELEGRAM_ALLOWED_DESTINATIONS` as a comma-separated list to explicitly include destinations (useful for pre-approving channels/groups before first interaction).
 - In Telegram mode, the Template Fallback section is hidden on Schedule.
 
 Inbound bot capabilities in `/api/telegram/webhook`:
@@ -226,6 +229,52 @@ Cloud API notes:
 - Send endpoint supports `recipient_type: individual` payload dispatch.
 - Delivery targets like groups/broadcast/channel should be mapped to recipient numbers and fanned out by worker.
 - WhatsApp Cloud API does not directly post into group chats from this endpoint; Schedule includes a provider-aware forward action ("Open WhatsApp forward" or "Open Telegram forward") so users can forward the prepared caption to selected groups.
+
+### Telegram Destinations & Permissions Checklist
+
+Accepted destination formats in this app:
+
+- Numeric private/group/supergroup/channel chat id (example: `123456789`, `-1001234567890`)
+- Public channel/supergroup username (example: `@mychannel`)
+
+Quick chat id discovery:
+
+1. Send a message in the target chat/channel (or DM your bot).
+2. Run `npm run telegram:chat-id` (reads local webhook state sessions).
+3. Or call `https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates` and read `message.chat.id`.
+
+Bot permission setup:
+
+- Private chat: user must start bot with `/start`.
+- Group/supergroup: add bot, grant send-message rights, and disable privacy mode in BotFather when broader update access is required (`/setprivacy -> Disable`).
+- Channel: add bot as channel admin with post permission. Use `@channelusername` or numeric channel `chat_id`.
+
+Validation commands:
+
+```bash
+npm run test:telegram -- --chat-id=-1001234567890 --text="Hello from Eazee"
+npm run test:telegram -- --chat-id=@mychannel --dry-run
+```
+
+Production dispatch flow:
+
+1. User schedules post in `/schedule`.
+2. Job persists in queue storage.
+3. Cron/manual request hits `POST /api/whatsapp/dispatch-due`.
+4. Dispatcher checks `EAZEE_MESSAGING_PROVIDER`.
+5. In Telegram mode it calls `sendTelegramTextMessage(...)` and sends to Telegram Bot API.
+
+Webhook registration:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://your-domain.com/api/telegram/webhook
+```
+
+With secret header validation:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://your-domain.com/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>
+```
 
 ### Groups Import Adapter (upstream backend contract)
 

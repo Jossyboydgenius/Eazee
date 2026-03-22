@@ -1,5 +1,7 @@
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowUpRight, Send, Settings } from "lucide-react";
+import calendarIcon from "@/svg/calendar.svg";
 
 const TELEGRAM_BOT_USERNAME =
   process.env.TELEGRAM_BOT_USERNAME?.trim() || "eazee_dispatch_bot";
@@ -106,6 +108,13 @@ export default function SettingsPage() {
                   borderColor: "var(--border)",
                 }}
               >
+                <Image
+                  src={calendarIcon}
+                  alt=""
+                  width={16}
+                  height={16}
+                  className="w-4 h-4"
+                />
                 Go to Schedule
               </Link>
             </div>

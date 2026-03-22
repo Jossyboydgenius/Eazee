@@ -25,6 +25,10 @@ import {
 import { parsePhoneNumberFromString } from "libphonenumber-js/min";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
+import {
+  isValidTelegramDestination,
+  normalizeTelegramDestination,
+} from "@/lib/telegramDestination";
 import addAPhotoIcon from "@/svg/add-a-photo.svg";
 import calendarIcon from "@/svg/calendar.svg";
 import announcementMegaphoneIcon from "@/svg/announcement-megaphone.svg";
@@ -57,7 +61,7 @@ const TARGET_OPTIONS: TargetOption[] = [
     id: "status",
     label: "Status",
     icon: Radio,
-    description: "Post to WhatsApp Status",
+    description: "Post to status destination",
   },
   {
     id: "groups",
@@ -69,7 +73,13 @@ const TARGET_OPTIONS: TargetOption[] = [
     id: "broadcast",
     label: "Broadcast",
     iconSrc: announcementMegaphoneIcon,
-    description: "Broadcast list",
+    description: "Broadcast to audience",
+  },
+  {
+    id: "channel",
+    label: "Channel",
+    icon: Send,
+    description: "Post to channel destination",
   },
 ];
 
@@ -300,7 +310,7 @@ function normalizeRecipientPhone(value: string): string {
 }
 
 function normalizeTelegramRecipient(value: string): string {
-  return value.trim().replace(/\s+/g, "");
+  return normalizeTelegramDestination(value);
 }
 
 function normalizeRecipientForProvider(
@@ -899,11 +909,7 @@ export default function SchedulePage() {
       const normalized = normalizeTelegramRecipient(value);
       if (!normalized) return null;
 
-      if (/^@[A-Za-z0-9_]{5,}$/.test(normalized)) {
-        return normalized;
-      }
-
-      if (/^-?\d{5,}$/.test(normalized)) {
+      if (isValidTelegramDestination(normalized)) {
         return normalized;
       }
 
@@ -1698,6 +1704,16 @@ export default function SchedulePage() {
                 style={{ color: "var(--text-muted)" }}
               />
             </button>
+
+            {isTelegramProvider && (
+              <p
+                className="mt-2 text-[11px]"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Accepted destinations: numeric chat id (example: -1001234567890)
+                or @username.
+              </p>
+            )}
 
             <AnimatePresence>
               {showAccountMenu && (

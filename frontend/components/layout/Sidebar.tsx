@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ChevronRight,
   ChevronLeft,
+  Settings,
   Sun,
   Moon,
   Menu,
@@ -182,6 +183,8 @@ function SidebarContent({
   showCloseButton,
   onClose,
 }: SidebarContentProps) {
+  const isSettingsActive = pathname.startsWith("/settings");
+
   return (
     <div className="flex h-full flex-col">
       {/* Absolute toggle button for desktop */}
@@ -307,28 +310,32 @@ function SidebarContent({
         style={{ borderColor: "var(--sidebar-border)" }}
       >
         {!collapsed && (
-          <div
-            className="mb-3 rounded-xl border px-3 py-2.5"
-            style={{
-              background: "var(--bg-elevated)",
-              borderColor: "var(--border)",
-            }}
+          <Link
+            href="/settings#telegram-link-settings"
+            onClick={onNavClick}
+            className="block mb-3"
           >
-            <p
-              className="text-[11px] font-semibold"
-              style={{ color: "var(--text-secondary)" }}
+            <motion.div
+              whileHover={{ x: 2 }}
+              whileTap={{ scale: 0.98 }}
+              className={cn("nav-link", isSettingsActive && "active")}
             >
-              Settings
-            </p>
-            <Link
-              href="/settings#telegram-link-settings"
-              onClick={onNavClick}
-              className="text-xs font-semibold"
-              style={{ color: "var(--brand-dark)" }}
-            >
-              Link Telegram
-            </Link>
-          </div>
+              <div className="flex items-start gap-2">
+                <Settings className="w-4 h-4 mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-sm leading-tight">
+                    Settings
+                  </p>
+                  <p className="text-[11px] opacity-70 truncate">
+                    Link Telegram
+                  </p>
+                </div>
+                {isSettingsActive && (
+                  <ChevronRight className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                )}
+              </div>
+            </motion.div>
+          </Link>
         )}
 
         {/* Theme toggle */}

@@ -1,5 +1,29 @@
+import {
+  isTelegramDestinationAllowed,
+  isValidTelegramDestination,
+  normalizeTelegramDestination,
+  parseAllowedTelegramDestinations,
+} from "@/lib/telegramDestination";
+import { listTelegramBindings } from "@/lib/telegramIdentity";
+import { listTelegramSessions } from "@/lib/telegramWebhook";
+import { listWhatsAppJobs } from "@/lib/whatsappQueue";
+
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
 const telegramDefaultParseMode = process.env.TELEGRAM_PARSE_MODE?.trim() || "";
+const telegramAllowedDestinationsRaw =
+  process.env.TELEGRAM_ALLOWED_DESTINATIONS?.trim() || "";
+const telegramAllowedDestinations = parseAllowedTelegramDestinations(
+  telegramAllowedDestinationsRaw,
+);
+const telegramDynamicAllowlistCacheTtlMs = 60_000;
+
+let telegramDestinationCache:
+  | {
+      expiresAt: number;
+      allowlist: Set<string>;
+      enforceAllowlist: boolean;
+    }
+  | undefined;
 
 export interface TelegramInlineKeyboardButton {
   text: string;
@@ -55,7 +79,7 @@ export function isTelegramBotConfigured(): boolean {
 export async function sendTelegramTextMessage(
   input: SendTelegramTextInput,
 ): Promise<SendTelegramTextResult> {
-  const chatId = normalizeTelegramChatId(input.chatId);
+  const chatId = normalizeTelegramDestination(input.chatId);
   const text = String(input.text || "").trim();
 
   if (!chatId || !text) {
@@ -65,6 +89,36 @@ export async function sendTelegramTextMessage(
       mode: "mock",
       error: "Missing valid Telegram chat_id or text body",
       data: null,
+    };
+  }
+
+  if (!isValidTelegramDestination(chatId)) {
+    return {
+      ok: false,
+      status: 400,
+      mode: "mock",
+      error:
+        "Invalid Telegram destination. Use numeric chat_id (example: -1001234567890) or @username.",
+      data: null,
+    };
+  }
+
+  const destinationPolicy = await resolveTelegramDestinationPolicy();
+
+  if (
+    destinationPolicy.enforceAllowlist &&
+    !isTelegramDestinationAllowed(chatId, destinationPolicy.allowlist)
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      mode: "mock",
+      error:
+        "Telegram destination is not permitted. Link the chat/group first or add it to TELEGRAM_ALLOWED_DESTINATIONS.",
+      data: {
+        chatId,
+        knownDestinationCount: destinationPolicy.allowlist.size,
+      },
     };
   }
 
@@ -214,10 +268,6 @@ async function callTelegramBotApi(
   };
 }
 
-function normalizeTelegramChatId(value: string): string {
-  return String(value || "").trim();
-}
-
 function createMockMessageId(): string {
   return `tg.mock.${Date.now()}`;
 }
@@ -274,4 +324,80 @@ function getTelegramApiErrorDescription(data: unknown): string {
   }
 
   return "";
+}
+
+async function resolveTelegramDestinationPolicy(): Promise<{
+  enforceAllowlist: boolean;
+  allowlist: Set<string>;
+}> {
+  const now = Date.now();
+  if (telegramDestinationCache && telegramDestinationCache.expiresAt > now) {
+    return {
+      enforceAllowlist: telegramDestinationCache.enforceAllowlist,
+      allowlist: new Set(telegramDestinationCache.allowlist),
+    };
+  }
+
+  const resolvedAllowlist = new Set<string>(telegramAllowedDestinations);
+  const normalized = (value: string) => normalizeTelegramDestination(value);
+
+  try {
+    const [bindingsResult, jobsResult] = await Promise.allSettled([
+      listTelegramBindings(500),
+      listWhatsAppJobs(),
+    ]);
+
+    if (bindingsResult.status === "fulfilled") {
+      for (const binding of bindingsResult.value) {
+        const destination = normalized(binding.chatId);
+        if (destination && isValidTelegramDestination(destination)) {
+          resolvedAllowlist.add(destination);
+        }
+      }
+    }
+
+    if (jobsResult.status === "fulfilled") {
+      for (const job of jobsResult.value) {
+        const ownerChatDestination = normalized(job.ownerChatId || "");
+        if (
+          ownerChatDestination &&
+          isValidTelegramDestination(ownerChatDestination)
+        ) {
+          resolvedAllowlist.add(ownerChatDestination);
+        }
+
+        for (const target of job.targets || []) {
+          const targetDestination = normalized(target.recipient || "");
+          if (
+            targetDestination &&
+            isValidTelegramDestination(targetDestination)
+          ) {
+            resolvedAllowlist.add(targetDestination);
+          }
+        }
+      }
+    }
+  } catch {
+    // Fall through to static env list when dynamic discovery fails.
+  }
+
+  for (const session of listTelegramSessions()) {
+    const destination = normalized(session.chatId);
+    if (destination && isValidTelegramDestination(destination)) {
+      resolvedAllowlist.add(destination);
+    }
+  }
+
+  const shouldEnforceAllowlist = resolvedAllowlist.size > 0;
+
+  telegramDestinationCache = {
+    expiresAt: now + telegramDynamicAllowlistCacheTtlMs,
+    allowlist: new Set(resolvedAllowlist),
+    enforceAllowlist: shouldEnforceAllowlist,
+  };
+
+  return {
+    enforceAllowlist: shouldEnforceAllowlist,
+    allowlist: resolvedAllowlist,
+  };
 }

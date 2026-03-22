@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sendWhatsAppMessageWithDeadlineFallback } from "@/lib/whatsappCloud";
 import { sendTelegramTextMessage } from "@/lib/telegramBot";
 import {
+  enqueueWhatsAppJob,
   getDueWhatsAppJobs,
   listWhatsAppJobs,
   markJobFailed,
@@ -45,6 +46,29 @@ function getTriggerSource(request: Request): string {
   return "manual";
 }
 
+function computeNextScheduledFor(
+  currentScheduledFor: string,
+  repeat: string,
+): string | null {
+  const current = new Date(currentScheduledFor);
+  if (Number.isNaN(current.getTime())) {
+    return null;
+  }
+
+  const next = new Date(current);
+  if (repeat === "daily") {
+    next.setUTCDate(next.getUTCDate() + 1);
+  } else if (repeat === "weekly") {
+    next.setUTCDate(next.getUTCDate() + 7);
+  } else if (repeat === "monthly") {
+    next.setUTCMonth(next.getUTCMonth() + 1);
+  } else {
+    return null;
+  }
+
+  return next.toISOString();
+}
+
 async function dispatchDueJobs(request: Request) {
   if (!isAuthorizedDispatchRequest(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -67,6 +91,8 @@ async function dispatchDueJobs(request: Request) {
     jobId: string;
     finalStatus?: string;
     attemptCount?: number;
+    nextJobId?: string;
+    nextScheduledFor?: string;
     sent: number;
     failed: number;
     skipped: number;
@@ -161,9 +187,43 @@ async function dispatchDueJobs(request: Request) {
     }
 
     let finalJob = undefined;
+    let nextJobId: string | undefined;
+    let nextScheduledFor: string | undefined;
 
     if (sent > 0 && failed === 0) {
       finalJob = await markJobSent(job.id, messageIds);
+
+      const computedNextScheduledFor = computeNextScheduledFor(
+        job.scheduledFor,
+        job.repeat,
+      );
+
+      if (computedNextScheduledFor) {
+        const recurringJob = await enqueueWhatsAppJob({
+          caption: job.caption,
+          templateName: job.templateName,
+          templateLanguageCode: job.templateLanguageCode,
+          templateBodyParameters: job.templateBodyParameters,
+          templateHeaderImageUrl: job.templateHeaderImageUrl,
+          postType: job.postType,
+          brief: job.brief,
+          tone: job.tone,
+          photos: job.photos,
+          hasCeloPayment: job.hasCeloPayment,
+          price: job.price,
+          currency: job.currency,
+          waAccount: job.waAccount,
+          sendTime: job.sendTime,
+          repeat: job.repeat,
+          targets: job.targets,
+          scheduledFor: computedNextScheduledFor,
+          ownerChatId: job.ownerChatId,
+          ownerWalletAddress: job.ownerWalletAddress,
+        });
+
+        nextJobId = recurringJob.id;
+        nextScheduledFor = recurringJob.scheduledFor;
+      }
     } else {
       const reason =
         errors.length > 0
@@ -176,6 +236,8 @@ async function dispatchDueJobs(request: Request) {
       jobId: job.id,
       finalStatus: finalJob?.status,
       attemptCount: finalJob?.attemptCount,
+      nextJobId,
+      nextScheduledFor,
       sent,
       failed,
       skipped,
