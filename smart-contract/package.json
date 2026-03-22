@@ -3,17 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "compile": "hardhat compile",
-    "deploy:alfajores": "hardhat run scripts/deploy.ts --network alfajores",
-    "deploy:celo": "hardhat run scripts/deploy.ts --network celo",
-    "test": "hardhat test"
+    "hardhat:node20": "npx -y node@20 ./node_modules/hardhat/internal/cli/bootstrap.js",
+    "compile": "npm run hardhat:node20 -- compile",
+    "deploy:sepolia": "npm run hardhat:node20 -- run scripts/deploy.ts --network celoSepolia",
+    "deploy:alfajores": "npm run deploy:sepolia",
+    "verify:sepolia": "npm run hardhat:node20 -- verify --network celoSepoliaBlockscout",
+    "verify:diagnose-keys": "node scripts/diagnose-verify-keys.mjs",
+    "deploy:celo": "npm run hardhat:node20 -- run scripts/deploy.ts --network celo",
+    "test": "npm run hardhat:node20 -- test"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "hardhat": "^2.22.0",
-    "typescript": "^5.6.3",
     "@types/node": "^22.0.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.0",
     "ts-node": "^10.9.2",
-    "dotenv": "^16.4.5"
+    "typescript": "^5.6.3"
   }
 }
