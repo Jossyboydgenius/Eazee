@@ -75,6 +75,14 @@ EAZEE_ALLOW_INSECURE_BIND_UPSERT=false
 
 Yes. Thirdweb social/in-app wallet login works with EVM chains, including Celo (and Celo Sepolia), as long as your `ConnectButton` is configured with the Celo chain and a valid Thirdweb client ID.
 
+### Telegram Mini App Wallet Login
+
+- Telegram in-app webviews are more reliable with in-app wallet `email` OTP than injected wallets.
+- The wallet button now auto-detects Telegram webview and uses in-app wallet auth in `redirect` mode.
+- In Telegram Mini App context, external wallets like MetaMask/Coinbase are hidden to avoid failed connect attempts.
+- On desktop/mobile browsers outside Telegram, Google/Apple/email + external wallets remain available.
+- Recommended UX: keep Telegram Mini App on email OTP for sign-in, then use the existing Telegram binding flow to link chat identity to the same wallet account.
+
 ### x402 Payments (server-side)
 
 An x402-protected endpoint is available at `GET /api/premium-content`.

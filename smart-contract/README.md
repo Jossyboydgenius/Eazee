@@ -120,4 +120,4 @@ After deploy, set `NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS` in `frontend/.env.local`
 - `No deployer account configured`: add `DEPLOYER_PRIVATE_KEY` to `smart-contract/.env.local`.
 - `insufficient funds for intrinsic transaction cost`: request more faucet CELO, then retry.
 - `Invalid API Key` during `verify:sepolia`: set `BLOCKSCOUT_API_KEY` in `smart-contract/.env.local` and ensure there are no extra spaces/newlines in the value.
-- `You are using a deprecated V1 endpoint` from `api.celoscan.io`/`api-sepolia.celoscan.io`: expected on old Celoscan flows. Use Blockscout endpoints configured in `hardhat.config.ts`.
+- `You are using a deprecated V1 endpoint` from `api.celoscan.io`/`api-sepolia.celoscan.io`: expected on old Celoscan flows. Use Blockscout endpoints configured in `blockscout.config.ts`.

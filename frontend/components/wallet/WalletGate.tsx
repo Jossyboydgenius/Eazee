@@ -7,6 +7,7 @@ import {
   isThirdwebClientConfigured,
   thirdwebClientConfigState,
 } from "@/lib/celo";
+import { isTelegramMiniApp } from "@/lib/telegramMiniApp";
 import { WalletConnectButton } from "@/components/wallet/WalletConnectButton";
 import appLogo from "@/images/logo.png";
 
@@ -22,6 +23,7 @@ function isProtectedRoute(pathname: string) {
 export function WalletGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const account = useActiveAccount();
+  const isTelegram = isTelegramMiniApp();
 
   const helperText =
     thirdwebClientConfigState === "invalid"
@@ -62,7 +64,9 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
 
         <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
           {isThirdwebClientConfigured
-            ? "Connect your wallet to continue using Eazee."
+            ? isTelegram
+              ? "In Telegram Mini App, use email OTP login for the most reliable wallet connection."
+              : "Connect your wallet to continue using Eazee."
             : helperText}
         </p>
 
