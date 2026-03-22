@@ -53,7 +53,12 @@ WHATSAPP_GROUPS_SOURCE_TOKEN=your_optional_backend_bearer_token
 WHATSAPP_GROUPS_ALLOW_MOCK=true
 WHATSAPP_TEMPLATE_TEST_MODE=mock
 CRON_SECRET=your_cron_secret
-WHATSAPP_QUEUE_STATE_FILE=.data/whatsapp-queue-state.json
+EAZEE_DB_FILE=.data/eazee.sqlite
+TELEGRAM_BIND_TOKEN_TTL_MINUTES=10
+EAZEE_WALLET_AUTH_CHALLENGE_TTL_MINUTES=5
+EAZEE_WALLET_SESSION_TTL_HOURS=24
+EAZEE_DASHBOARD_API_TOKEN=optional_static_dashboard_bearer_token
+EAZEE_ALLOW_INSECURE_BIND_UPSERT=false
 ```
 
 ## Thirdweb API Keys (Fix KEY_NOT_FOUND)
@@ -92,8 +97,70 @@ Scaffolded API routes:
 
 Queue/webhook persistence notes:
 
-- Queue jobs + webhook ingests are persisted to `.data/whatsapp-queue-state.json` by default.
-- Override storage location with `WHATSAPP_QUEUE_STATE_FILE`.
+- Queue jobs, receipts, webhook ingests, Telegram bindings, bind tokens, and wallet auth sessions are persisted to SQLite.
+- Default DB path is `.data/eazee.sqlite`.
+- Override DB path with `EAZEE_DB_FILE`.
+
+### Telegram Wallet Binding + Dashboard Auth (Phase 2)
+
+The bind route now supports wallet-signature verification and short-lived wallet sessions.
+
+1. Request challenge:
+
+```bash
+curl -X POST http://localhost:3000/api/telegram/bind \
+  -H "Content-Type: application/json" \
+  -d '{"action":"challenge","walletAddress":"0xYourWallet","chatId":"123456789"}'
+```
+
+2. Sign returned `challenge.message` with the connected wallet.
+
+3. Request Telegram bind token with signature:
+
+```bash
+curl -X POST http://localhost:3000/api/telegram/bind \
+  -H "Content-Type: application/json" \
+  -d '{"action":"request","chatId":"123456789","walletAddress":"0xYourWallet","nonce":"<nonce>","signature":"0x..."}'
+```
+
+Response includes:
+
+- `token` for in-chat `/link <token>` confirmation
+- `walletSessionToken` for authorized dashboard/scheduling API access
+
+4. In Telegram chat, run:
+
+```text
+/link <token>
+```
+
+5. Query dashboard history with session token:
+
+```bash
+curl "http://localhost:3000/api/dashboard/history?walletAddress=0xyourwallet" \
+  -H "Authorization: Bearer <walletSessionToken>"
+```
+
+Optional admin access: set `EAZEE_DASHBOARD_API_TOKEN` and use it as bearer token for server-to-server reads.
+
+### SQLite in Production
+
+- SQLite here is a real relational database engine (not an in-memory mock), embedded in your app process.
+- It is local to the filesystem path configured by `EAZEE_DB_FILE`.
+- It deploys fine on single-instance servers/VMs with persistent disk.
+- On Vercel serverless deployments, local function filesystem storage is not a durable shared database layer, so SQLite file storage is not recommended for production app state.
+- It is not ideal for many concurrent writers across multiple app replicas.
+- For Vercel or horizontal scale/multi-instance deployments, migrate this operational store to Postgres (for example Vercel Postgres, Neon, Supabase, or Prisma Postgres) while keeping the same API boundaries.
+- Smart contracts remain for on-chain settlement/proof; queue/session/retry/receipt state should stay off-chain in DB.
+
+#### What is currently stored in SQLite
+
+- Telegram identity bindings (`telegram_bindings`) and one-time bind tokens (`telegram_binding_tokens`).
+- Scheduled dispatch jobs (`dispatch_jobs`) including ownership metadata (`owner_chat_id`, `owner_wallet_address`) and idempotency keys.
+- Per-target delivery receipts (`dispatch_receipts`) for sent/failed status tracking.
+- Inbound webhook event payloads (`whatsapp_webhook_events`) for audit/debug replay.
+- Wallet auth challenges and nonces (`wallet_auth_challenges`) for signature verification.
+- Wallet API sessions (`wallet_auth_sessions`) for dashboard/scheduling authorization.
 
 Cron notes:
 
@@ -116,6 +183,8 @@ Inbound bot capabilities in `/api/telegram/webhook`:
 - Inline keyboard navigation + callback query handling
 - Per-chat session tracking persisted in `.data/telegram-webhook-state.json`
 - Request logging and structured error responses
+
+`/dashboard` now returns linked wallet summary data in chat (recent schedules, receipts, and payment transactions) and keeps the mini-app dashboard button for full detail.
 
 Development polling mode:
 

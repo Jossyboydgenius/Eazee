@@ -104,6 +104,7 @@ npm run deploy:alfajores
 ## 🌐 Frontend Docs
 
 - Frontend-only setup and deployment: [frontend/README.md](frontend/README.md)
+- Telegram bind hardening, dashboard auth, and SQLite production notes: [frontend/README.md#telegram-wallet-binding--dashboard-auth-phase-2](frontend/README.md#telegram-wallet-binding--dashboard-auth-phase-2)
 
 ## 🚢 Deploy to Vercel (Frontend)
 
@@ -114,6 +115,11 @@ Use the repository as source and configure:
 - **Build Command**: `npm run build`
 
 Add frontend env vars from `frontend/.env.local` in Vercel Project Settings.
+
+Database note for Vercel:
+
+- Current operational persistence uses SQLite file storage (`.data/eazee.sqlite`) for local/dev and single-host persistent-disk deployments.
+- For production on Vercel, prefer a managed Postgres backend (optionally via Prisma) because local function filesystem storage is not a durable shared database layer.
 
 ## 🏆 Hackathon Tracks
 

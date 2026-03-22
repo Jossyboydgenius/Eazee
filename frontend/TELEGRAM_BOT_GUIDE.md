@@ -205,16 +205,32 @@ Mini App button support:
 For local development, run:
 
 ```bash
-npm run telegram:poll
+npm run dev
 ```
 
-This starts Telegram `getUpdates` long polling and forwards each update to your local webhook route so command/callback handling stays consistent with production.
+`npm run dev` now starts:
+
+- Next.js dev server
+- Telegram `getUpdates` long polling bridge (when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_LOCAL_BOT_AUTOSTART` is not disabled)
+
+The polling bridge forwards each update to your local webhook route so command/callback handling stays consistent with production.
+
+You can still run the bridge manually:
+
+```bash
+npm run telegram:poll
+```
 
 Optional override:
 
 ```bash
 npm run telegram:poll -- --webhook-url=http://localhost:3000/api/telegram/webhook --timeout=25
 ```
+
+Important Telegram API behavior:
+
+- `getUpdates` and `setWebhook` are mutually exclusive.
+- The local poller disables webhook automatically unless you pass `--keep-webhook`.
 
 Production should use webhooks (`setWebhook`) instead of long polling.
 
@@ -259,6 +275,7 @@ TELEGRAM_BOT_USERNAME=eazee_dispatch_bot
 TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_MINI_APP_URL=https://your-domain.com
 TELEGRAM_POLLING_WEBHOOK_URL=http://localhost:3000/api/telegram/webhook
+TELEGRAM_LOCAL_BOT_AUTOSTART=1
 CRON_SECRET=...
 ```
 

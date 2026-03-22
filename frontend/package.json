@@ -3,15 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev-with-telegram.mjs",
+    "dev:next": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
     "test:wa-templates": "node scripts/test-whatsapp-templates.mjs",
     "test:telegram": "node scripts/test-telegram-send.mjs",
-    "telegram:poll": "node scripts/telegram-long-polling.mjs"
+    "telegram:poll": "node scripts/telegram-long-polling.mjs",
+    "telegram:chat-id": "node scripts/get-telegram-chat-id.mjs"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.0",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-select": "^2.1.2",
     "@radix-ui/react-slider": "^1.2.1",
@@ -48,6 +53,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "16.1.6",
     "postcss": "^8.4.49",
+    "prisma": "^6.19.0",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3"
   }

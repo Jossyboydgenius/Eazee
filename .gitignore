@@ -5,3 +5,12 @@ frontend/.next
 smart-contract/node_modules
 frontend/.env.local
 smart-contract/.env
+smart-contract/.env.local
+.data/
+frontend/.data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+smart-contract/artifacts/
+smart-contract/cache/
+smart-contract/typechain-types/
