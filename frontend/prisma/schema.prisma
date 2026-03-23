@@ -37,6 +37,7 @@ model TelegramBindingToken {
 model DispatchJob {
     id                     String   @id
     caption                String
+    productName            String?  @map("product_name")
     templateName           String?  @map("template_name")
     templateLanguageCode   String?  @map("template_language_code")
     templateBodyParameters Json?    @map("template_body_parameters")
