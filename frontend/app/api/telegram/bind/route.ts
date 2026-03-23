@@ -5,6 +5,7 @@ import {
   getTelegramBindingByChatId,
   getTelegramBindingByWallet,
   listTelegramBindings,
+  revokeTelegramBindingByChatId,
   upsertTelegramBinding,
 } from "@/lib/telegramIdentity";
 import {
@@ -187,10 +188,56 @@ export async function POST(request: Request) {
       });
     }
 
+    if (action === "unbind") {
+      const chatId = String(body?.chatId || "").trim();
+      const walletAddress = String(body?.walletAddress || "")
+        .trim()
+        .toLowerCase();
+
+      const activeSession = await getWalletSessionFromRequest(request);
+      const allowInsecureUpsert =
+        process.env.EAZEE_ALLOW_INSECURE_BIND_UPSERT?.trim().toLowerCase() ===
+        "true";
+
+      if (!chatId) {
+        return NextResponse.json(
+          { error: "chatId is required for unbind" },
+          { status: 400 },
+        );
+      }
+
+      if (
+        !allowInsecureUpsert &&
+        (!activeSession ||
+          !walletAddress ||
+          activeSession.walletAddress !== walletAddress)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Unauthorized unbind. Provide a valid wallet session for the bound wallet.",
+          },
+          { status: 401 },
+        );
+      }
+
+      const result = await revokeTelegramBindingByChatId({ chatId });
+
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        action: "unbind",
+        binding: result.binding,
+      });
+    }
+
     return NextResponse.json(
       {
         error:
-          "Unsupported action. Use action=challenge|request|confirm|upsert",
+          "Unsupported action. Use action=challenge|request|confirm|upsert|unbind",
       },
       { status: 400 },
     );
