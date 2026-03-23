@@ -13,6 +13,7 @@ interface IERC20 {
  * @dev Accepts cUSD, cEUR, and cREAL stablecoin payments with time-locked escrow
  */
 contract EazeeEscrow {
+    address public constant NATIVE_TOKEN = address(0);
     address public owner;
     uint256 public escrowTimeout = 7 days;
     uint256 private _nextEscrowId;
@@ -88,22 +89,39 @@ contract EazeeEscrow {
 
         IERC20(token).transferFrom(msg.sender, address(this), amount);
 
-        escrowId = ++_nextEscrowId;
+        escrowId = _createEscrow(
+            msg.sender,
+            seller,
+            token,
+            amount,
+            productId,
+            productName
+        );
+    }
 
-        escrows[escrowId] = Escrow({
-            id: escrowId,
-            buyer: msg.sender,
-            seller: seller,
-            token: token,
-            amount: amount,
-            productId: productId,
-            productName: productName,
-            status: EscrowStatus.Pending,
-            createdAt: block.timestamp,
-            releasedAt: 0
-        });
+    /**
+     * @notice Deposit native CELO into escrow for a product
+     * @param seller The seller's address who will receive funds on release
+     * @param productId Off-chain product ID from Eazee post
+     * @param productName Human-readable product name
+     */
+    function depositNative(
+        address seller,
+        string calldata productId,
+        string calldata productName
+    ) external payable returns (uint256 escrowId) {
+        require(msg.value > 0, "EazeeEscrow: zero amount");
+        require(seller != address(0), "EazeeEscrow: zero seller");
+        require(seller != msg.sender, "EazeeEscrow: buyer is seller");
 
-        emit PaymentDeposited(escrowId, msg.sender, seller, token, amount, productId, productName);
+        escrowId = _createEscrow(
+            msg.sender,
+            seller,
+            NATIVE_TOKEN,
+            msg.value,
+            productId,
+            productName
+        );
     }
 
     /**
@@ -117,7 +135,12 @@ contract EazeeEscrow {
         escrow.status = EscrowStatus.Confirmed;
         escrow.releasedAt = block.timestamp;
 
-        IERC20(escrow.token).transfer(escrow.seller, escrow.amount);
+        if (escrow.token == NATIVE_TOKEN) {
+            (bool sent, ) = payable(escrow.seller).call{value: escrow.amount}("");
+            require(sent, "EazeeEscrow: native release failed");
+        } else {
+            IERC20(escrow.token).transfer(escrow.seller, escrow.amount);
+        }
 
         emit PaymentReleased(escrowId, escrow.seller, escrow.amount);
     }
@@ -138,7 +161,12 @@ contract EazeeEscrow {
 
         escrow.status = EscrowStatus.Refunded;
 
-        IERC20(escrow.token).transfer(escrow.buyer, escrow.amount);
+        if (escrow.token == NATIVE_TOKEN) {
+            (bool sent, ) = payable(escrow.buyer).call{value: escrow.amount}("");
+            require(sent, "EazeeEscrow: native refund failed");
+        } else {
+            IERC20(escrow.token).transfer(escrow.buyer, escrow.amount);
+        }
 
         emit PaymentRefunded(escrowId, escrow.buyer, escrow.amount);
     }
@@ -172,5 +200,31 @@ contract EazeeEscrow {
 
     function getEscrow(uint256 escrowId) external view returns (Escrow memory) {
         return escrows[escrowId];
+    }
+
+    function _createEscrow(
+        address buyer,
+        address seller,
+        address token,
+        uint256 amount,
+        string calldata productId,
+        string calldata productName
+    ) private returns (uint256 escrowId) {
+        escrowId = ++_nextEscrowId;
+
+        escrows[escrowId] = Escrow({
+            id: escrowId,
+            buyer: buyer,
+            seller: seller,
+            token: token,
+            amount: amount,
+            productId: productId,
+            productName: productName,
+            status: EscrowStatus.Pending,
+            createdAt: block.timestamp,
+            releasedAt: 0
+        });
+
+        emit PaymentDeposited(escrowId, buyer, seller, token, amount, productId, productName);
     }
 }

@@ -72,21 +72,22 @@ async function main() {
 
   const supportedTokens = resolveSupportedTokens(networkName);
   if (supportedTokens.length === 0) {
-    throw new Error(
-      `No supported token addresses configured for ${networkName}. Set CELO_SEPOLIA_SUPPORTED_TOKENS or CELO_MAINNET_SUPPORTED_TOKENS (comma-separated) in smart-contract/.env.local.`,
+    console.log(
+      "No ERC20 supported token list configured. Native CELO escrow is still enabled by contract.",
     );
-  }
-
-  console.log("Configuring supported tokens:", supportedTokens.join(", "));
-  for (const tokenAddress of supportedTokens) {
-    const tx = await contract.setTokenSupport(tokenAddress, true);
-    await tx.wait();
+  } else {
+    console.log("Configuring supported tokens:", supportedTokens.join(", "));
+    for (const tokenAddress of supportedTokens) {
+      const tx = await contract.setTokenSupport(tokenAddress, true);
+      await tx.wait();
+    }
   }
 
   const address = await contract.getAddress();
   console.log("\n✅ EazeeEscrow deployed to:", address);
   console.log("🌐 Network:", networkName);
   console.log("📋 View on explorer: " + explorerBaseUrl + address);
+  console.log("🟢 Native CELO escrow: enabled");
   console.log(
     "\nUpdate NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS in frontend/.env.local with:",
     address,
