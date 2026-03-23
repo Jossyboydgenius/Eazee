@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
-import { listPaymentsByOwner, upsertPayment } from "@/lib/payments";
+import {
+  listPaymentsByOwner,
+  reconcilePaymentByTxHash,
+  upsertPayment,
+} from "@/lib/payments";
 
 export const runtime = "nodejs";
+
+const MAX_RECONCILIATIONS_PER_REQUEST = 10;
 
 function toSafeLimit(input: string): number {
   const parsed = Number(input);
@@ -29,6 +35,36 @@ export async function GET(request: Request) {
     ownerWalletAddress,
     limit: toSafeLimit(String(searchParams.get("limit") || "50")),
   });
+
+  const pendingCandidates = payments
+    .filter((payment) => payment.escrowStatus === "pending")
+    .slice(0, MAX_RECONCILIATIONS_PER_REQUEST);
+
+  if (pendingCandidates.length > 0) {
+    const reconciledResults = await Promise.allSettled(
+      pendingCandidates.map((payment) =>
+        reconcilePaymentByTxHash(payment.txHash),
+      ),
+    );
+
+    const reconciledByTxHash = new Map(
+      reconciledResults
+        .filter(
+          (
+            result,
+          ): result is PromiseFulfilledResult<
+            NonNullable<Awaited<ReturnType<typeof reconcilePaymentByTxHash>>>
+          > => result.status === "fulfilled" && Boolean(result.value),
+        )
+        .map((result) => [result.value.txHash, result.value]),
+    );
+
+    const merged = payments.map(
+      (payment) => reconciledByTxHash.get(payment.txHash) || payment,
+    );
+
+    return NextResponse.json({ payments: merged, count: merged.length });
+  }
 
   return NextResponse.json({ payments, count: payments.length });
 }
