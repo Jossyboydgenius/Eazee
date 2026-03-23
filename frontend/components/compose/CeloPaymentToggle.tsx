@@ -18,7 +18,7 @@ export function CeloPaymentToggle() {
     setCurrency,
   } = useEazeeStore();
   const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
-  const selectedStablecoin =
+  const selectedPaymentToken =
     STABLECOINS.find((coin) => coin.symbol === currency) ?? STABLECOINS[0];
 
   return (
@@ -35,13 +35,13 @@ export function CeloPaymentToggle() {
             className="text-sm font-semibold"
             style={{ color: "var(--text-primary)" }}
           >
-            Add CELO paymenet Button
+            Add CELO payment button
           </p>
           <p
             className="text-xs mt-1"
             style={{ color: "var(--text-secondary)" }}
           >
-            Customers tap to pay in cUSD right from WhatsApp
+            Customers tap to pay in CELO or stablecoins right from WhatsApp
           </p>
         </div>
 
@@ -77,12 +77,18 @@ export function CeloPaymentToggle() {
                   <input
                     type="text"
                     inputMode="decimal"
-                    placeholder="0.00"
+                    placeholder="0.000000"
                     value={price}
                     onChange={(e) => setPrice(formatPriceInput(e.target.value))}
                     className="input-base pl-9"
                   />
                 </div>
+                <p
+                  className="text-[11px] mt-1"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Supports up to 6 decimals (e.g. 0.00999 CELO)
+                </p>
               </div>
 
               <div>
@@ -90,7 +96,7 @@ export function CeloPaymentToggle() {
                   className="text-xs mb-1.5"
                   style={{ color: "var(--text-secondary)" }}
                 >
-                  Stablecoin
+                  Payment token
                 </p>
                 <div className="relative">
                   <button
@@ -107,7 +113,8 @@ export function CeloPaymentToggle() {
                         className="text-sm font-semibold truncate"
                         style={{ color: "var(--text-primary)" }}
                       >
-                        {selectedStablecoin.symbol} - {selectedStablecoin.name}
+                        {selectedPaymentToken.symbol} -{" "}
+                        {selectedPaymentToken.name}
                       </p>
                     </div>
 
