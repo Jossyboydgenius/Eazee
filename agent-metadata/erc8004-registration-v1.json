@@ -1,0 +1,8 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Eazee",
+  "description": "Eazee is a WhatsApp-first AI commerce agent.\n\nIt empowers merchants to effortlessly create sales-ready posts, schedule automated distributions, and seamlessly accept cUSD stablecoin payments via an onchain escrow smart contract structure on the Celo network.",
+  "image": "https://raw.githubusercontent.com/Jossyboydgenius/Eazee/refs/heads/main/frontend/images/eazee.png",
+  "x402Support": true,
+  "ipfs": "ipfs://QmaU5wrRQfJfjvJbKGucpnDEDxMf8ykiFff3SYRZh4pNyq"
+}
