@@ -315,6 +315,12 @@ function normalizeTelegramRecipient(value: string): string {
 
 function sanitizeTelegramChatIdInput(value: string): string {
   const compact = String(value || "").replace(/\s+/g, "");
+
+  if (compact.startsWith("@")) {
+    const username = compact.slice(1).replace(/[^A-Za-z0-9_]/g, "");
+    return username ? `@${username}` : "@";
+  }
+
   const hasNegativePrefix = compact.startsWith("-");
   const digits = compact.replace(/\D/g, "");
 
@@ -1021,13 +1027,13 @@ export default function SchedulePage() {
     if (!formattedNumber) {
       setNewAccountNumberError(
         isTelegramProvider
-          ? "Enter a valid numeric Telegram ID (e.g. -1001234567890)."
+          ? "Enter a valid Telegram destination (e.g. -1001234567890 or @yourchannel)."
           : "Enter a valid WhatsApp number (digits only).",
       );
       toast({
         title: `Invalid ${platformLabel} destination`,
         description: isTelegramProvider
-          ? "Use a numeric Telegram ID only (example: -1001234567890)."
+          ? "Use a numeric Telegram ID (example: -1001234567890) or @channel username."
           : "Use a valid local or international number.",
         variant: "error",
       });
@@ -1209,6 +1215,7 @@ export default function SchedulePage() {
         },
         body: JSON.stringify({
           caption: captionSource,
+          productName,
           templateName:
             showTemplateFallbackSection && useTemplateFallback
               ? templateName.trim()
@@ -1253,18 +1260,6 @@ export default function SchedulePage() {
             ? scheduleResult.error
             : "Failed to schedule post";
         throw new Error(errorMessage);
-      }
-
-      const scheduledFor =
-        typeof scheduleResult?.scheduledFor === "string"
-          ? Date.parse(scheduleResult.scheduledFor)
-          : Number.NaN;
-
-      if (
-        Number.isFinite(scheduledFor) &&
-        scheduledFor <= Date.now() + 15_000
-      ) {
-        void fetch("/api/whatsapp/dispatch-due", { method: "POST" });
       }
 
       savePost({
@@ -1798,7 +1793,7 @@ export default function SchedulePage() {
                 style={{ color: "var(--text-muted)" }}
               >
                 Accepted destination: numeric Telegram ID (example:
-                -1001234567890).
+                -1001234567890) or @channel username.
               </p>
             )}
 
@@ -1902,20 +1897,22 @@ export default function SchedulePage() {
                                 ) {
                                   setNewAccountNumberError(
                                     isTelegramProvider
-                                      ? "Enter a valid numeric Telegram ID (e.g. -1001234567890)."
+                                      ? "Enter a valid Telegram destination (e.g. -1001234567890 or @yourchannel)."
                                       : "Enter a valid WhatsApp number (digits only).",
                                   );
                                 }
                               }}
                               inputMode={
-                                isTelegramProvider ? "numeric" : "numeric"
+                                isTelegramProvider ? "text" : "numeric"
                               }
                               pattern={
-                                isTelegramProvider ? "-?[0-9]*" : "[0-9]*"
+                                isTelegramProvider
+                                  ? "(@[A-Za-z0-9_]{5,}|-?[0-9]{5,20})"
+                                  : "[0-9]*"
                               }
                               placeholder={
                                 isTelegramProvider
-                                  ? "Enter your Telegram ID"
+                                  ? "Telegram ID or @channel username"
                                   : "WhatsApp number (include country code)"
                               }
                               className="input-base"
