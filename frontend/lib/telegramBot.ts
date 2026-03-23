@@ -6,7 +6,7 @@ import {
 } from "@/lib/telegramDestination";
 import { listTelegramBindings } from "@/lib/telegramIdentity";
 import { listTelegramSessions } from "@/lib/telegramWebhook";
-import { listWhatsAppJobs } from "@/lib/whatsappQueue";
+import { listKnownDispatchDestinations } from "@/lib/whatsappQueue";
 
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
 const telegramDefaultParseMode = process.env.TELEGRAM_PARSE_MODE?.trim() || "";
@@ -98,7 +98,7 @@ export async function sendTelegramTextMessage(
       status: 400,
       mode: "mock",
       error:
-        "Invalid Telegram destination. Use numeric chat_id only (example: -1001234567890).",
+        "Invalid Telegram destination. Use numeric chat_id (example: -1001234567890) or a channel username (example: @yourchannel).",
       data: null,
     };
   }
@@ -344,7 +344,7 @@ async function resolveTelegramDestinationPolicy(): Promise<{
   try {
     const [bindingsResult, jobsResult] = await Promise.allSettled([
       listTelegramBindings(500),
-      listWhatsAppJobs(),
+      listKnownDispatchDestinations(300),
     ]);
 
     if (bindingsResult.status === "fulfilled") {
@@ -357,23 +357,13 @@ async function resolveTelegramDestinationPolicy(): Promise<{
     }
 
     if (jobsResult.status === "fulfilled") {
-      for (const job of jobsResult.value) {
-        const ownerChatDestination = normalized(job.ownerChatId || "");
+      for (const destination of jobsResult.value) {
+        const targetDestination = normalized(destination);
         if (
-          ownerChatDestination &&
-          isValidTelegramDestination(ownerChatDestination)
+          targetDestination &&
+          isValidTelegramDestination(targetDestination)
         ) {
-          resolvedAllowlist.add(ownerChatDestination);
-        }
-
-        for (const target of job.targets || []) {
-          const targetDestination = normalized(target.recipient || "");
-          if (
-            targetDestination &&
-            isValidTelegramDestination(targetDestination)
-          ) {
-            resolvedAllowlist.add(targetDestination);
-          }
+          resolvedAllowlist.add(targetDestination);
         }
       }
     }

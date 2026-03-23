@@ -225,29 +225,88 @@ export async function confirmTelegramBindingToken(input: {
 
 export async function getTelegramBindingByChatId(
   chatIdInput: string,
+  options?: {
+    includeInactive?: boolean;
+  },
 ): Promise<TelegramBinding | null> {
   const chatId = normalizeChatId(chatIdInput);
   if (!chatId) return null;
+
+  const includeInactive = options?.includeInactive === true;
 
   const row = await prisma.telegramBinding.findUnique({
     where: { chatId },
   });
 
-  return row ? mapBindingRow(row) : null;
+  if (!row) {
+    return null;
+  }
+
+  if (!includeInactive && row.status !== "active") {
+    return null;
+  }
+
+  return mapBindingRow(row);
 }
 
 export async function getTelegramBindingByWallet(
   walletAddressInput: string,
+  options?: {
+    includeInactive?: boolean;
+  },
 ): Promise<TelegramBinding | null> {
   const walletAddress = normalizeWalletAddress(walletAddressInput);
   if (!walletAddress) return null;
 
+  const includeInactive = options?.includeInactive === true;
+
   const row = await prisma.telegramBinding.findFirst({
-    where: { walletAddress },
+    where: includeInactive
+      ? { walletAddress }
+      : {
+          walletAddress,
+          status: "active",
+        },
     orderBy: { updatedAt: "desc" },
   });
 
   return row ? mapBindingRow(row) : null;
+}
+
+export async function revokeTelegramBindingByChatId(input: { chatId: string }) {
+  const chatId = normalizeChatId(input.chatId);
+
+  if (!chatId) {
+    return {
+      ok: false as const,
+      error: "chatId is required",
+    };
+  }
+
+  const existing = await prisma.telegramBinding.findUnique({
+    where: { chatId },
+  });
+
+  if (!existing) {
+    return {
+      ok: false as const,
+      error: "No binding found for this Telegram chat",
+    };
+  }
+
+  const updated = await prisma.telegramBinding.update({
+    where: { chatId },
+    data: {
+      status: "revoked",
+      updatedAt: new Date(nowIso()),
+      lastVerifiedAt: null,
+    },
+  });
+
+  return {
+    ok: true as const,
+    binding: mapBindingRow(updated),
+  };
 }
 
 export async function listTelegramBindings(

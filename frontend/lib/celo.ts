@@ -1,7 +1,9 @@
 import { createThirdwebClient } from "thirdweb";
-import { celoSepoliaTestnet, defineChain } from "thirdweb/chains";
+import { celo, celoSepoliaTestnet, defineChain } from "thirdweb/chains";
 
-const DEFAULT_CELO_CHAIN_ID = 11142220;
+const CELO_MAINNET_CHAIN_ID = 42220;
+const CELO_SEPOLIA_CHAIN_ID = 11142220;
+const DEFAULT_CELO_CHAIN_ID = CELO_SEPOLIA_CHAIN_ID;
 
 const configuredChainId = Number(process.env.NEXT_PUBLIC_CELO_CHAIN_ID);
 const chainId = Number.isFinite(configuredChainId)
@@ -39,15 +41,29 @@ export const thirdwebClientConfigState = !rawThirdwebClientId
       ? "valid"
       : "invalid";
 
-export const celoChain =
-  chainId === DEFAULT_CELO_CHAIN_ID ? celoSepoliaTestnet : defineChain(chainId);
+const configuredCeloChain =
+  chainId === CELO_MAINNET_CHAIN_ID
+    ? celo
+    : chainId === CELO_SEPOLIA_CHAIN_ID
+      ? celoSepoliaTestnet
+      : defineChain(chainId);
+
+export const celoChain = configuredCeloChain;
+export const supportedCeloChains = [celo, celoSepoliaTestnet];
+
+export const activeCeloNetworkLabel =
+  chainId === CELO_MAINNET_CHAIN_ID
+    ? "Celo Mainnet"
+    : chainId === CELO_SEPOLIA_CHAIN_ID
+      ? "Celo Sepolia"
+      : `Chain ${chainId}`;
 
 export const thirdwebClient = createThirdwebClient({
   clientId: thirdwebClientId || "unconfigured-thirdweb-client-id",
 });
 
 export const celoExplorerBaseUrl =
-  chainId === 11142220
+  chainId === CELO_SEPOLIA_CHAIN_ID
     ? "https://celo-sepolia.blockscout.com"
     : chainId === 44787
       ? "https://alfajores.celoscan.io"

@@ -35,10 +35,18 @@ export function formatPriceInput(value: string): string {
   const digitsAndDot = value.replace(/[^\d.]/g, "");
   if (!digitsAndDot) return "";
 
+  const hasTrailingDot = digitsAndDot.endsWith(".");
   const [integerRaw = "", ...decimalParts] = digitsAndDot.split(".");
-  const decimalRaw = decimalParts.join("").slice(0, 2);
-  const base =
-    decimalParts.length > 0 ? `${integerRaw}.${decimalRaw}` : integerRaw;
+  const decimalRaw = decimalParts.join("").slice(0, 6);
+  const normalizedInteger = integerRaw.replace(/^0+(?=\d)/, "") || "0";
+  let base =
+    decimalParts.length > 0
+      ? `${normalizedInteger}.${decimalRaw}`
+      : normalizedInteger;
+
+  if (hasTrailingDot && decimalParts.length === 1 && decimalRaw.length === 0) {
+    base = `${normalizedInteger}.`;
+  }
 
   return formatNumberWithDelimiters(base);
 }
@@ -66,6 +74,12 @@ export function getTimeAgo(date: Date | string): string {
 }
 
 export const STABLECOINS = [
+  {
+    symbol: "CELO",
+    name: "Celo Native",
+    address: "native",
+    icon: "🟢",
+  },
   {
     symbol: "cUSD",
     name: "Celo Dollar",

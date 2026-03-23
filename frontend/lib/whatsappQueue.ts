@@ -1,15 +1,46 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 
-type DispatchJobRow = Awaited<
-  ReturnType<typeof prisma.dispatchJob.findMany>
->[number];
 type DispatchReceiptRow = Awaited<
   ReturnType<typeof prisma.dispatchReceipt.findMany>
 >[number];
 type WhatsAppWebhookEventRow = Awaited<
   ReturnType<typeof prisma.whatsAppWebhookEvent.findMany>
 >[number];
+
+const DISPATCH_JOB_SELECT = {
+  id: true,
+  caption: true,
+  productName: true,
+  templateName: true,
+  templateLanguageCode: true,
+  templateBodyParameters: true,
+  templateHeaderImageUrl: true,
+  postType: true,
+  brief: true,
+  tone: true,
+  hasCeloPayment: true,
+  price: true,
+  currency: true,
+  waAccount: true,
+  sendTime: true,
+  repeatValue: true,
+  scheduledFor: true,
+  targets: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  attemptCount: true,
+  lastError: true,
+  messageIds: true,
+  ownerChatId: true,
+  ownerWalletAddress: true,
+  idempotencyKey: true,
+} satisfies Prisma.DispatchJobSelect;
+
+type DispatchJobRow = Prisma.DispatchJobGetPayload<{
+  select: typeof DISPATCH_JOB_SELECT;
+}>;
 
 export type WhatsAppTargetType =
   | "individual"
@@ -34,6 +65,7 @@ export type WhatsAppDispatchStatus =
 export interface WhatsAppDispatchJob {
   id: string;
   caption: string;
+  productName?: string;
   templateName?: string;
   templateLanguageCode?: string;
   templateBodyParameters?: string[];
@@ -63,6 +95,7 @@ export interface WhatsAppDispatchJob {
 
 export interface NewWhatsAppDispatchJob {
   caption: string;
+  productName?: string;
   templateName?: string;
   templateLanguageCode?: string;
   templateBodyParameters?: string[];
@@ -94,6 +127,8 @@ const MAX_DISPATCH_ATTEMPTS = Number.parseInt(
   process.env.EAZEE_MAX_DISPATCH_ATTEMPTS || "3",
   10,
 );
+const DEFAULT_DUE_DISPATCH_BATCH_SIZE = 50;
+const MAX_DUE_DISPATCH_BATCH_SIZE = 200;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -107,10 +142,25 @@ function createJobId(): string {
   return `wa-job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function resolveDueDispatchBatchSize(): number {
+  const parsed = Number.parseInt(
+    process.env.EAZEE_DISPATCH_BATCH_SIZE ||
+      `${DEFAULT_DUE_DISPATCH_BATCH_SIZE}`,
+    10,
+  );
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_DUE_DISPATCH_BATCH_SIZE;
+  }
+
+  return Math.min(parsed, MAX_DUE_DISPATCH_BATCH_SIZE);
+}
+
 function mapJobRow(row: DispatchJobRow): WhatsAppDispatchJob {
   return {
     id: row.id,
     caption: row.caption,
+    productName: row.productName || undefined,
     templateName: row.templateName || undefined,
     templateLanguageCode: row.templateLanguageCode || undefined,
     templateBodyParameters: jsonArray<string>(row.templateBodyParameters),
@@ -118,7 +168,7 @@ function mapJobRow(row: DispatchJobRow): WhatsAppDispatchJob {
     postType: row.postType,
     brief: row.brief,
     tone: row.tone,
-    photos: jsonArray<string>(row.photos),
+    photos: [],
     hasCeloPayment: row.hasCeloPayment,
     price: row.price,
     currency: row.currency,
@@ -142,7 +192,10 @@ function mapJobRow(row: DispatchJobRow): WhatsAppDispatchJob {
 async function getJobById(
   jobId: string,
 ): Promise<WhatsAppDispatchJob | undefined> {
-  const row = await prisma.dispatchJob.findUnique({ where: { id: jobId } });
+  const row = await prisma.dispatchJob.findUnique({
+    where: { id: jobId },
+    select: DISPATCH_JOB_SELECT,
+  });
   return row ? mapJobRow(row) : undefined;
 }
 
@@ -155,6 +208,7 @@ export async function enqueueWhatsAppJob(
   if (idempotencyKey) {
     const existing = await prisma.dispatchJob.findUnique({
       where: { idempotencyKey },
+      select: DISPATCH_JOB_SELECT,
     });
 
     if (existing) {
@@ -170,6 +224,7 @@ export async function enqueueWhatsAppJob(
     data: {
       id: jobId,
       caption: input.caption,
+      productName: input.productName || null,
       templateName: input.templateName || null,
       templateLanguageCode: input.templateLanguageCode || null,
       templateBodyParameters: input.templateBodyParameters || [],
@@ -206,6 +261,7 @@ export async function enqueueWhatsAppJob(
   return {
     id: created.id,
     caption: input.caption,
+    productName: input.productName,
     templateName: input.templateName,
     templateLanguageCode: input.templateLanguageCode,
     templateBodyParameters: input.templateBodyParameters || [],
@@ -235,8 +291,19 @@ export async function enqueueWhatsAppJob(
 }
 
 export async function listWhatsAppJobs(): Promise<WhatsAppDispatchJob[]> {
+  const defaultListLimit = Number.parseInt(
+    process.env.EAZEE_DISPATCH_LIST_LIMIT || "100",
+    10,
+  );
+  const safeListLimit =
+    Number.isFinite(defaultListLimit) && defaultListLimit > 0
+      ? Math.min(Math.floor(defaultListLimit), 500)
+      : 100;
+
   const rows = await prisma.dispatchJob.findMany({
     orderBy: { createdAt: "desc" },
+    take: safeListLimit,
+    select: DISPATCH_JOB_SELECT,
   });
 
   return rows.map(mapJobRow);
@@ -245,7 +312,9 @@ export async function listWhatsAppJobs(): Promise<WhatsAppDispatchJob[]> {
 export async function getDueWhatsAppJobs(
   referenceDate = new Date(),
 ): Promise<WhatsAppDispatchJob[]> {
-  const rows = await prisma.dispatchJob.findMany({
+  const batchSize = resolveDueDispatchBatchSize();
+
+  const dueJobIds = await prisma.dispatchJob.findMany({
     where: {
       status: "queued",
       scheduledFor: {
@@ -253,9 +322,57 @@ export async function getDueWhatsAppJobs(
       },
     },
     orderBy: { scheduledFor: "asc" },
+    take: batchSize,
+    select: {
+      id: true,
+    },
   });
 
-  return rows.map(mapJobRow);
+  const jobs = await Promise.all(
+    dueJobIds.map(async (row) => {
+      return getJobById(row.id);
+    }),
+  );
+
+  return jobs.filter((job): job is WhatsAppDispatchJob => Boolean(job));
+}
+
+export async function listKnownDispatchDestinations(
+  limit = 200,
+): Promise<string[]> {
+  const safeLimit =
+    Number.isFinite(limit) && limit > 0
+      ? Math.min(Math.floor(limit), 1000)
+      : 200;
+
+  const rows = await prisma.dispatchJob.findMany({
+    orderBy: { createdAt: "desc" },
+    take: safeLimit,
+    select: {
+      ownerChatId: true,
+      targets: true,
+    },
+  });
+
+  const destinations = new Set<string>();
+
+  for (const row of rows) {
+    if (row.ownerChatId) {
+      destinations.add(row.ownerChatId);
+    }
+
+    const targets = Array.isArray(row.targets)
+      ? (row.targets as Array<{ recipient?: unknown }>)
+      : [];
+
+    for (const target of targets) {
+      if (typeof target?.recipient === "string" && target.recipient.trim()) {
+        destinations.add(target.recipient.trim());
+      }
+    }
+  }
+
+  return Array.from(destinations);
 }
 
 export async function markJobProcessing(
@@ -403,17 +520,33 @@ export async function listDispatchReceiptsByOwner(input: {
   }
 
   const rows: DispatchReceiptRow[] = await prisma.dispatchReceipt.findMany({
-    where: chatId
-      ? {
-          job: {
-            ownerChatId: chatId,
-          },
-        }
-      : {
-          job: {
-            ownerWalletAddress: walletAddress,
-          },
-        },
+    where:
+      chatId && walletAddress
+        ? {
+            OR: [
+              {
+                job: {
+                  ownerChatId: chatId,
+                },
+              },
+              {
+                job: {
+                  ownerWalletAddress: walletAddress,
+                },
+              },
+            ],
+          }
+        : chatId
+          ? {
+              job: {
+                ownerChatId: chatId,
+              },
+            }
+          : {
+              job: {
+                ownerWalletAddress: walletAddress,
+              },
+            },
     orderBy: { attemptedAt: "desc" },
     take: limit,
   });
@@ -448,15 +581,58 @@ export async function listWhatsAppJobsByOwner(input: {
     return [];
   }
 
-  const rows: DispatchJobRow[] = await prisma.dispatchJob.findMany({
-    where: chatId
-      ? { ownerChatId: chatId }
-      : { ownerWalletAddress: walletAddress },
+  const rows = await prisma.dispatchJob.findMany({
+    where:
+      chatId && walletAddress
+        ? {
+            OR: [
+              { ownerChatId: chatId },
+              { ownerWalletAddress: walletAddress },
+            ],
+          }
+        : chatId
+          ? { ownerChatId: chatId }
+          : { ownerWalletAddress: walletAddress },
     orderBy: { createdAt: "desc" },
     take: limit,
+    select: DISPATCH_JOB_SELECT,
   });
 
   return rows.map(mapJobRow);
+}
+
+export async function scheduleQueuedJobForImmediateDispatch(
+  jobId: string,
+): Promise<WhatsAppDispatchJob | null> {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) {
+    return null;
+  }
+
+  const existing = await prisma.dispatchJob.findUnique({
+    where: { id: normalizedJobId },
+    select: {
+      id: true,
+      status: true,
+    },
+  });
+
+  if (!existing || existing.status !== "queued") {
+    return null;
+  }
+
+  const now = new Date(nowIso());
+
+  await prisma.dispatchJob.update({
+    where: { id: normalizedJobId },
+    data: {
+      sendTime: "now",
+      scheduledFor: now,
+      updatedAt: now,
+    },
+  });
+
+  return getWhatsAppJobById(normalizedJobId);
 }
 
 export async function getWhatsAppJobById(
@@ -469,6 +645,7 @@ export async function getWhatsAppJobById(
 
   const row = await prisma.dispatchJob.findUnique({
     where: { id: normalizedJobId },
+    select: DISPATCH_JOB_SELECT,
   });
 
   return row ? mapJobRow(row) : null;
@@ -478,6 +655,7 @@ export async function updateQueuedWhatsAppJob(
   jobId: string,
   patch: {
     caption: string;
+    productName?: string;
     templateName?: string;
     templateLanguageCode?: string;
     templateBodyParameters?: string[];
@@ -505,6 +683,10 @@ export async function updateQueuedWhatsAppJob(
 
   const existing = await prisma.dispatchJob.findUnique({
     where: { id: normalizedJobId },
+    select: {
+      id: true,
+      status: true,
+    },
   });
 
   if (!existing) {
@@ -519,6 +701,7 @@ export async function updateQueuedWhatsAppJob(
     where: { id: normalizedJobId },
     data: {
       caption: patch.caption,
+      productName: patch.productName || null,
       templateName: patch.templateName || null,
       templateLanguageCode: patch.templateLanguageCode || null,
       templateBodyParameters: patch.templateBodyParameters || [],
@@ -552,6 +735,10 @@ export async function deleteQueuedWhatsAppJob(jobId: string): Promise<boolean> {
 
   const existing = await prisma.dispatchJob.findUnique({
     where: { id: normalizedJobId },
+    select: {
+      id: true,
+      status: true,
+    },
   });
 
   if (!existing) {

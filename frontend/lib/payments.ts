@@ -43,6 +43,7 @@ export interface PaymentRecord {
 
 const DEFAULT_CHAIN_ID = 11142220;
 const DEFAULT_CELO_SEPOLIA_RPC = "https://forno.celo-sepolia.celo-testnet.org";
+const DEFAULT_CELO_MAINNET_RPC = "https://forno.celo.org";
 
 function now() {
   return new Date();
@@ -158,7 +159,9 @@ export async function listPaymentsByOwner(input: {
 
 function createChainClient(chainId: number) {
   const rpcUrl =
-    process.env.CELO_SEPOLIA_RPC_URL?.trim() || DEFAULT_CELO_SEPOLIA_RPC;
+    chainId === 42220
+      ? process.env.CELO_MAINNET_RPC_URL?.trim() || DEFAULT_CELO_MAINNET_RPC
+      : process.env.CELO_SEPOLIA_RPC_URL?.trim() || DEFAULT_CELO_SEPOLIA_RPC;
 
   return createPublicClient({
     chain: defineChain({
