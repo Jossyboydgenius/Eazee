@@ -4,6 +4,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useActiveAccount } from "thirdweb/react";
 import {
+  activeCeloNetworkLabel,
   isThirdwebClientConfigured,
   thirdwebClientConfigState,
 } from "@/lib/celo";
@@ -75,7 +76,9 @@ export function WalletGate({ children }: { children: React.ReactNode }) {
         </div>
 
         <p className="text-xs mt-3" style={{ color: "var(--text-muted)" }}>
-          {isThirdwebClientConfigured ? "Network: Celo Sepolia" : footerText}
+          {isThirdwebClientConfigured
+            ? `Network: ${activeCeloNetworkLabel}`
+            : footerText}
         </p>
       </div>
     </div>
