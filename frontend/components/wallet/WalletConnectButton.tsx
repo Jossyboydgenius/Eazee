@@ -5,6 +5,7 @@ import { ConnectButton } from "thirdweb/react";
 import { createWallet, inAppWallet } from "thirdweb/wallets";
 import {
   celoChain,
+  supportedCeloChains,
   thirdwebClientConfigState,
   isThirdwebClientConfigured,
   thirdwebClient,
@@ -84,7 +85,7 @@ export function WalletConnectButton({
     <ConnectButton
       client={thirdwebClient}
       chain={celoChain}
-      chains={[celoChain]}
+      chains={supportedCeloChains}
       wallets={wallets}
       appMetadata={{
         name: "Eazee",
