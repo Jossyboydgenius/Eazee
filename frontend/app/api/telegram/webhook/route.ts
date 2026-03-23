@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   answerTelegramCallbackQuery,
   isTelegramBotConfigured,
+  type TelegramInlineKeyboardButton,
   type TelegramInlineKeyboardMarkup,
   sendTelegramTextMessage,
 } from "@/lib/telegramBot";
@@ -16,9 +17,12 @@ import {
 import {
   confirmTelegramBindingToken,
   getTelegramBindingByChatId,
+  revokeTelegramBindingByChatId,
 } from "@/lib/telegramIdentity";
 import {
+  getWhatsAppJobById,
   listDispatchReceiptsByOwner,
+  scheduleQueuedJobForImmediateDispatch,
   listWhatsAppJobsByOwner,
 } from "@/lib/whatsappQueue";
 import { listPaymentsByOwner } from "@/lib/payments";
@@ -34,19 +38,46 @@ const telegramMiniAppUrl =
 
 type CommandName =
   | "start"
+  | "link"
+  | "unbind"
   | "create"
   | "dashboard"
   | "schedules"
+  | "postnow"
   | "help"
   | "status";
 
-const EXTRA_SUPPORTED_COMMANDS = ["/start_bind_<token>", "/link <token>"];
+type DashboardSection =
+  | "menu"
+  | "summary"
+  | "schedules"
+  | "payments"
+  | "receipts";
+type PostNowMode = "saved" | "telegram";
+
+type CallbackAction =
+  | { type: "command"; command: CommandName }
+  | { type: "dashboard"; section: DashboardSection }
+  | { type: "schedules"; page: number }
+  | { type: "post_now_pick"; jobId: string }
+  | { type: "post_now_run"; mode: PostNowMode; jobId: string }
+  | { type: "none" };
+
+const EXTRA_SUPPORTED_COMMANDS = [
+  "/start_bind_<token>",
+  "/link <token>",
+  "/postnow <jobId>",
+  "/unbind",
+];
 
 const SUPPORTED_COMMANDS: CommandName[] = [
   "start",
+  "link",
+  "unbind",
   "create",
   "dashboard",
   "schedules",
+  "postnow",
   "help",
   "status",
 ];
@@ -80,16 +111,13 @@ function isValidHttpsUrl(value: string): boolean {
 
 function createMainMenuKeyboard(): TelegramInlineKeyboardMarkup {
   const createPostUrl = buildMiniAppUrl("/compose");
-  const dashboardUrl = buildMiniAppUrl("/dashboard");
 
   const inlineKeyboard: TelegramInlineKeyboardMarkup["inline_keyboard"] = [
     [
       createPostUrl
         ? { text: "🧩 Create Post", web_app: { url: createPostUrl } }
         : { text: "🧩 Create Post", callback_data: "nav:create" },
-      dashboardUrl
-        ? { text: "📊 Dashboard", web_app: { url: dashboardUrl } }
-        : { text: "📊 Dashboard", callback_data: "nav:dashboard" },
+      { text: "📊 Dashboard", callback_data: "dash:menu" },
     ],
     [{ text: "❓ Help", callback_data: "nav:help" }],
   ];
@@ -109,22 +137,107 @@ function createMainMenuKeyboard(): TelegramInlineKeyboardMarkup {
 }
 
 function createDashboardKeyboard(): TelegramInlineKeyboardMarkup {
+  const miniAppDashboardUrl = buildMiniAppUrl("/dashboard");
   const inlineKeyboard: TelegramInlineKeyboardMarkup["inline_keyboard"] = [
+    [
+      { text: "📅 Schedules", callback_data: "dash:schedules:1" },
+      { text: "💳 Payments", callback_data: "dash:payments" },
+    ],
+    [
+      { text: "📬 Receipts", callback_data: "dash:receipts" },
+      { text: "🧾 Summary", callback_data: "dash:summary" },
+    ],
     [{ text: "⬅️ Back to Menu", callback_data: "nav:start" }],
   ];
 
-  const dashboardUrl = buildMiniAppUrl("/dashboard");
-  if (dashboardUrl) {
+  if (miniAppDashboardUrl) {
     inlineKeyboard.unshift([
       {
         text: "📈 Open Dashboard",
-        web_app: { url: dashboardUrl },
+        web_app: { url: miniAppDashboardUrl },
       },
     ]);
   }
 
   return {
     inline_keyboard: inlineKeyboard,
+  };
+}
+
+function createSchedulesKeyboard(input: {
+  jobs: Awaited<ReturnType<typeof listWhatsAppJobsByOwner>>;
+  page: number;
+  totalPages: number;
+  startIndex: number;
+}): TelegramInlineKeyboardMarkup {
+  const inlineKeyboard: TelegramInlineKeyboardMarkup["inline_keyboard"] = [];
+
+  const actionableJobs = input.jobs.filter((job) => job.status === "queued");
+
+  for (const [index, job] of actionableJobs.entries()) {
+    const rowNumber = input.startIndex + index + 1;
+    const reference = createPublicJobReference(job.id);
+    inlineKeyboard.push([
+      {
+        text: `⚡ Post now #${rowNumber} (${reference})`,
+        callback_data: `post:pick:${job.id}`,
+      },
+    ]);
+  }
+
+  const paginationRow: TelegramInlineKeyboardButton[] = [];
+  if (input.page > 1) {
+    paginationRow.push({
+      text: "⬅️ Prev",
+      callback_data: `dash:schedules:${input.page - 1}`,
+    });
+  }
+  if (input.page < input.totalPages) {
+    paginationRow.push({
+      text: "Next ➡️",
+      callback_data: `dash:schedules:${input.page + 1}`,
+    });
+  }
+  if (paginationRow.length > 0) {
+    inlineKeyboard.push(paginationRow);
+  }
+
+  inlineKeyboard.push([
+    { text: "📊 Dashboard", callback_data: "dash:menu" },
+    { text: "🏠 Main Menu", callback_data: "nav:start" },
+  ]);
+
+  return {
+    inline_keyboard: inlineKeyboard,
+  };
+}
+
+function createPostNowActionKeyboard(input: {
+  jobId: string;
+  whatsappShareUrl: string;
+}): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "🚀 Send now (saved targets)",
+          callback_data: `post:run:s:${input.jobId}`,
+        },
+      ],
+      [
+        {
+          text: "📤 Send copy to this chat",
+          callback_data: `post:run:t:${input.jobId}`,
+        },
+      ],
+      [
+        {
+          text: "📲 Share to WhatsApp",
+          url: input.whatsappShareUrl,
+        },
+      ],
+      [{ text: "📅 Back to Schedules", callback_data: "dash:schedules:1" }],
+    ],
   };
 }
 
@@ -145,16 +258,188 @@ function createLinkWalletKeyboard(): TelegramInlineKeyboardMarkup {
   };
 }
 
-function getCommandFromCallbackData(callbackData: string): CommandName | null {
+function parseCallbackAction(callbackData: string): CallbackAction {
   const normalized = String(callbackData || "")
     .trim()
     .toLowerCase();
-  if (normalized === "nav:start") return "start";
-  if (normalized === "nav:create") return "create";
-  if (normalized === "nav:dashboard") return "dashboard";
-  if (normalized === "nav:schedules") return "schedules";
-  if (normalized === "nav:help") return "help";
-  return null;
+  if (!normalized) {
+    return { type: "none" };
+  }
+
+  if (normalized === "nav:start") return { type: "command", command: "start" };
+  if (normalized === "nav:create")
+    return { type: "command", command: "create" };
+  if (normalized === "nav:dashboard") {
+    return { type: "command", command: "dashboard" };
+  }
+  if (normalized === "nav:schedules") {
+    return { type: "command", command: "schedules" };
+  }
+  if (normalized === "nav:help") return { type: "command", command: "help" };
+
+  if (normalized === "dash:menu") {
+    return { type: "dashboard", section: "menu" };
+  }
+  if (normalized === "dash:summary") {
+    return { type: "dashboard", section: "summary" };
+  }
+  if (normalized === "dash:payments") {
+    return { type: "dashboard", section: "payments" };
+  }
+  if (normalized === "dash:receipts") {
+    return { type: "dashboard", section: "receipts" };
+  }
+
+  if (normalized.startsWith("dash:schedules:")) {
+    const pageRaw = normalized.slice("dash:schedules:".length).trim();
+    const parsed = Number.parseInt(pageRaw || "1", 10);
+    return {
+      type: "schedules",
+      page: Number.isFinite(parsed) && parsed > 0 ? parsed : 1,
+    };
+  }
+
+  if (normalized.startsWith("post:pick:")) {
+    const jobId = normalized.slice("post:pick:".length).trim();
+    if (jobId) {
+      return { type: "post_now_pick", jobId };
+    }
+  }
+
+  if (normalized.startsWith("post:run:")) {
+    const payload = normalized.slice("post:run:".length).trim();
+    const [modeRaw, ...jobIdParts] = payload.split(":");
+    const mode =
+      modeRaw === "t" ? "telegram" : modeRaw === "s" ? "saved" : null;
+    const jobId = jobIdParts.join(":").trim();
+
+    if (mode && jobId) {
+      return { type: "post_now_run", mode, jobId };
+    }
+  }
+
+  return { type: "none" };
+}
+
+function buildShareableJobText(
+  job: Awaited<ReturnType<typeof getWhatsAppJobById>>,
+): string {
+  if (!job) {
+    return "";
+  }
+
+  const photoLinks = Array.isArray(job.photos)
+    ? job.photos.filter((photo) => typeof photo === "string" && photo.trim())
+    : [];
+
+  const lines = [job.caption];
+  if (photoLinks.length > 0) {
+    lines.push("", "Media:", ...photoLinks.slice(0, 3));
+  }
+
+  return lines.filter(Boolean).join("\n").trim();
+}
+
+function createPublicJobReference(jobId: string): string {
+  const normalized = String(jobId || "").trim();
+  if (!normalized) {
+    return "POST";
+  }
+
+  const suffix = normalized.split("-").slice(-1)[0] || normalized.slice(-6);
+  return `POST-${suffix.toUpperCase()}`;
+}
+
+function formatScheduleStatusLabel(status: string): string {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "queued") return "Scheduled";
+  if (normalized === "processing") return "Sending";
+  if (normalized === "sent") return "Sent";
+  if (normalized === "failed") return "Needs attention";
+  return "Scheduled";
+}
+
+function formatScheduleTitle(job: {
+  productName?: string;
+  brief?: string;
+  caption?: string;
+  postType?: string;
+}): string {
+  const productName = String(job.productName || "").trim();
+  if (productName) {
+    return productName.length > 48
+      ? `${productName.slice(0, 48)}…`
+      : productName;
+  }
+
+  const brief = String(job.brief || "").trim();
+  if (brief) {
+    return brief.length > 48 ? `${brief.slice(0, 48)}…` : brief;
+  }
+
+  const caption = String(job.caption || "").trim();
+  if (caption) {
+    return caption.length > 48 ? `${caption.slice(0, 48)}…` : caption;
+  }
+
+  const postType = String(job.postType || "post").trim();
+  return `${postType} post`;
+}
+
+function buildWhatsAppShareUrl(text: string): string {
+  const encodedText = encodeURIComponent(text || "Check this post from Eazee");
+  return `https://wa.me/?text=${encodedText}`;
+}
+
+function buildTelegramBuyNowUrlForJob(job: {
+  id: string;
+  productName?: string;
+  brief?: string;
+  postType?: string;
+  hasCeloPayment: boolean;
+  price: string;
+  currency: string;
+  ownerWalletAddress?: string;
+}): string {
+  if (!job.hasCeloPayment) {
+    return "";
+  }
+
+  const sellerAddress =
+    process.env.NEXT_PUBLIC_ESCROW_SELLER_ADDRESS?.trim() || "";
+  if (!sellerAddress) {
+    return "";
+  }
+
+  const price = String(job.price || "").trim();
+  const currency = String(job.currency || "cUSD").trim();
+  if (!price || !currency) {
+    return "";
+  }
+
+  const payBaseUrl = buildMiniAppUrl("/pay");
+  if (!payBaseUrl) {
+    return "";
+  }
+
+  const productName =
+    String(job.productName || job.brief || job.postType || "Post").trim() ||
+    "Post";
+
+  const url = new URL(payBaseUrl);
+  url.searchParams.set("jobId", String(job.id || "").trim());
+  url.searchParams.set("productName", productName);
+  url.searchParams.set("price", price);
+  url.searchParams.set("currency", currency);
+  url.searchParams.set("seller", sellerAddress);
+  url.searchParams.set(
+    "ownerWalletAddress",
+    String(job.ownerWalletAddress || sellerAddress).trim(),
+  );
+
+  return url.toString();
 }
 
 function parseSchedulesPageFromText(text: string): number {
@@ -174,6 +459,20 @@ function parseSchedulesPageFromText(text: string): number {
   }
 
   return parsed;
+}
+
+function parseJobIdFromText(text: string): string {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const tokens = normalized.split(/\s+/);
+  if (tokens.length < 2) {
+    return "";
+  }
+
+  return String(tokens[1] || "").trim();
 }
 
 function buildMiniAppUrl(pathname = "/"): string | null {
@@ -203,8 +502,44 @@ function formatTxHash(txHash: string): string {
   return `${value.slice(0, 8)}...${value.slice(-6)}`;
 }
 
+async function triggerImmediateDispatchCycle(
+  requestUrl: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const dispatchUrl = new URL("/api/whatsapp/dispatch-due", requestUrl);
+    const cronSecret = process.env.CRON_SECRET?.trim() || "";
+
+    const response = await fetch(dispatchUrl.toString(), {
+      method: "POST",
+      headers: cronSecret
+        ? {
+            Authorization: `Bearer ${cronSecret}`,
+          }
+        : undefined,
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `Dispatch cycle returned ${response.status}`,
+      };
+    }
+
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to trigger dispatch cycle",
+    };
+  }
+}
+
 async function buildDashboardSummaryText(chatId: string): Promise<string> {
-  const binding = await getTelegramBindingByChatId(chatId);
+  const binding = await getTelegramBindingByChatId(chatId).catch(() => null);
   if (!binding?.walletAddress) {
     return [
       "📊 Dashboard",
@@ -217,22 +552,36 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
     ].join("\n");
   }
 
-  const [jobs, receipts, payments] = await Promise.all([
-    listWhatsAppJobsByOwner({
-      chatId,
-      walletAddress: binding.walletAddress,
-      limit: 30,
-    }),
-    listDispatchReceiptsByOwner({
-      chatId,
-      walletAddress: binding.walletAddress,
-      limit: 5,
-    }),
-    listPaymentsByOwner({
-      ownerWalletAddress: binding.walletAddress,
-      limit: 5,
-    }),
-  ]);
+  let jobs = [] as Awaited<ReturnType<typeof listWhatsAppJobsByOwner>>;
+  let receipts = [] as Awaited<ReturnType<typeof listDispatchReceiptsByOwner>>;
+  let payments = [] as Awaited<ReturnType<typeof listPaymentsByOwner>>;
+
+  try {
+    [jobs, receipts, payments] = await Promise.all([
+      listWhatsAppJobsByOwner({
+        chatId,
+        walletAddress: binding.walletAddress,
+        limit: 30,
+      }),
+      listDispatchReceiptsByOwner({
+        chatId,
+        walletAddress: binding.walletAddress,
+        limit: 5,
+      }),
+      listPaymentsByOwner({
+        ownerWalletAddress: binding.walletAddress,
+        limit: 5,
+      }),
+    ]);
+  } catch {
+    return [
+      "📊 Dashboard summary",
+      `Wallet: ${binding.walletAddress}`,
+      "",
+      "We can see your wallet is linked, but your data is temporarily unavailable.",
+      "Try /dashboard again in a few seconds.",
+    ].join("\n");
+  }
 
   const statusSummary = jobs.reduce(
     (accumulator, job) => {
@@ -253,7 +602,7 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
       minute: "2-digit",
     });
     const recipientCount = Array.isArray(job.targets) ? job.targets.length : 0;
-    return `${index + 1}. ${job.postType || "post"} • ${job.status} • ${scheduleTime} • ${recipientCount} target${recipientCount === 1 ? "" : "s"}`;
+    return `${index + 1}. ${formatScheduleTitle(job)} • ${job.status} • ${scheduleTime} • ${recipientCount} target${recipientCount === 1 ? "" : "s"}`;
   });
 
   const recentPaymentLines = payments.slice(0, 3).map((payment, index) => {
@@ -298,33 +647,145 @@ async function buildDashboardSummaryText(chatId: string): Promise<string> {
   ].join("\n");
 }
 
+async function buildDashboardMenuText(chatId: string): Promise<string> {
+  const binding = await getTelegramBindingByChatId(chatId).catch(() => null);
+
+  if (!binding?.walletAddress) {
+    return [
+      "📊 Dashboard",
+      "Link your wallet first to access schedules, payments, and delivery stats.",
+      "",
+      "Run /link <token> to connect this chat.",
+    ].join("\n");
+  }
+
+  return [
+    "📊 Dashboard options",
+    `Wallet: ${binding.walletAddress}`,
+    "",
+    "Choose an option:",
+    "- Schedules",
+    "- Payments",
+    "- Delivery receipts",
+    "- Summary",
+  ].join("\n");
+}
+
+async function buildPaymentsText(chatId: string): Promise<string> {
+  const binding = await getTelegramBindingByChatId(chatId).catch(() => null);
+  if (!binding?.walletAddress) {
+    return ["💳 Payments", "Link your wallet first using /link <token>."].join(
+      "\n",
+    );
+  }
+
+  const payments = await listPaymentsByOwner({
+    ownerWalletAddress: binding.walletAddress,
+    limit: 10,
+  }).catch(() => []);
+
+  const lines = payments.slice(0, 10).map((payment, index) => {
+    return `${index + 1}. ${payment.amount} ${payment.currency} • ${payment.productName || "payment"} • ${formatTxHash(payment.txHash)}`;
+  });
+
+  return [
+    "💳 Payments",
+    `Wallet: ${binding.walletAddress}`,
+    `Recent records: ${payments.length}`,
+    "",
+    ...(lines.length > 0 ? lines : ["No recent transactions yet."]),
+  ].join("\n");
+}
+
+async function buildReceiptsText(chatId: string): Promise<string> {
+  const binding = await getTelegramBindingByChatId(chatId).catch(() => null);
+  if (!binding?.walletAddress) {
+    return [
+      "📬 Delivery receipts",
+      "Link your wallet first using /link <token>.",
+    ].join("\n");
+  }
+
+  const receipts = await listDispatchReceiptsByOwner({
+    chatId,
+    walletAddress: binding.walletAddress,
+    limit: 20,
+  }).catch(() => []);
+
+  const sentCount = receipts.filter(
+    (receipt) => receipt.status === "sent",
+  ).length;
+  const failedCount = receipts.filter(
+    (receipt) => receipt.status === "failed",
+  ).length;
+
+  const lines = receipts.slice(0, 8).map((receipt, index) => {
+    const attemptedAt = new Date(receipt.attemptedAt).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    return `${index + 1}. ${receipt.status.toUpperCase()} • ${attemptedAt} • ${receipt.targetId}`;
+  });
+
+  return [
+    "📬 Delivery receipts",
+    `Wallet: ${binding.walletAddress}`,
+    `Sent: ${sentCount} | Failed: ${failedCount}`,
+    "",
+    ...(lines.length > 0 ? lines : ["No delivery receipts yet."]),
+  ].join("\n");
+}
+
+interface SchedulePageView {
+  text: string;
+  page: number;
+  totalPages: number;
+  jobs: Awaited<ReturnType<typeof listWhatsAppJobsByOwner>>;
+  startIndex: number;
+}
+
 async function buildSchedulesText(
   chatId: string,
   requestedPage: number,
-): Promise<string> {
-  const binding = await getTelegramBindingByChatId(chatId);
+): Promise<SchedulePageView> {
+  const binding = await getTelegramBindingByChatId(chatId).catch(() => null);
   if (!binding?.walletAddress) {
-    return [
-      "📅 Schedules",
-      "Link your wallet first to view your schedule list.",
-      "",
-      "Run /link <token> then /schedules",
-    ].join("\n");
+    return {
+      text: [
+        "📅 Schedules",
+        "Link your wallet first to view your schedule list.",
+        "",
+        "Run /link <token> then /schedules",
+      ].join("\n"),
+      page: 1,
+      totalPages: 1,
+      jobs: [],
+      startIndex: 0,
+    };
   }
 
   const jobs = await listWhatsAppJobsByOwner({
     chatId,
     walletAddress: binding.walletAddress,
     limit: 100,
-  });
+  }).catch(() => []);
 
   if (jobs.length === 0) {
-    return [
-      "📅 Schedules",
-      "No schedules found yet.",
-      "",
-      "Create one from the mini app and run /schedules again.",
-    ].join("\n");
+    return {
+      text: [
+        "📅 Schedules",
+        "No schedules found yet (or data is still syncing).",
+        "",
+        "Create one from the mini app and run /schedules again.",
+      ].join("\n"),
+      page: 1,
+      totalPages: 1,
+      jobs: [],
+      startIndex: 0,
+    };
   }
 
   const pageSize = 10;
@@ -334,6 +795,7 @@ async function buildSchedulesText(
   const pageJobs = jobs.slice(startIndex, startIndex + pageSize);
 
   const lines = pageJobs.map((job, index) => {
+    const rowNumber = startIndex + index + 1;
     const scheduleTime = new Date(job.scheduledFor).toLocaleString("en-US", {
       month: "short",
       day: "numeric",
@@ -341,19 +803,31 @@ async function buildSchedulesText(
       minute: "2-digit",
     });
     const recipientCount = Array.isArray(job.targets) ? job.targets.length : 0;
+    const reference = createPublicJobReference(job.id);
 
-    return `${startIndex + index + 1}. ${job.postType || "post"} • ${job.status} • ${scheduleTime} • ${recipientCount} target${recipientCount === 1 ? "" : "s"}`;
+    return [
+      `${rowNumber}. ${formatScheduleTitle(job)}`,
+      `   ${formatScheduleStatusLabel(job.status)} • ${scheduleTime}`,
+      `   ${recipientCount} destination${recipientCount === 1 ? "" : "s"} • Ref: ${reference}`,
+    ].join("\n");
   });
 
-  return [
-    "📅 Your schedules",
-    `Wallet: ${binding.walletAddress}`,
-    `Page ${page}/${totalPages} • Total ${jobs.length}`,
-    "",
-    ...lines,
-    "",
-    "Use /schedules <page> (example: /schedules 2)",
-  ].join("\n");
+  return {
+    text: [
+      "📅 Your schedules",
+      `Wallet: ${binding.walletAddress}`,
+      `Page ${page}/${totalPages} • Total ${jobs.length}`,
+      "",
+      ...lines,
+      "",
+      "Tap ⚡ Post now below each row to choose destination.",
+      "Use /schedules <page> to move through pages.",
+    ].join("\n"),
+    page,
+    totalPages,
+    jobs: pageJobs,
+    startIndex,
+  };
 }
 
 function isAuthorizedWebhookRequest(request: Request): boolean {
@@ -405,6 +879,7 @@ async function handleInboundCommand(
   command: string,
   chatId: string,
   text = "",
+  requestUrl = "",
 ): Promise<{
   handled: boolean;
   replyMode: "live" | "mock" | "none";
@@ -502,10 +977,36 @@ async function handleInboundCommand(
 
       replyMarkup = createMainMenuKeyboard();
     } else {
-      replyText =
-        "✅ Eazee bot is active. Use the buttons below to create content, open your dashboard, or get help instantly.";
+      const existingBinding = await getTelegramBindingByChatId(chatId).catch(
+        () => null,
+      );
+
+      replyText = existingBinding?.walletAddress
+        ? await buildDashboardSummaryText(chatId)
+        : [
+            "✅ Eazee bot is active.",
+            "To link your wallet in 2 simple steps:",
+            "1) Open Eazee app → Settings → Link Telegram",
+            "2) Tap request token, then send /link <token> here",
+            "",
+            "After linking, use /dashboard and /schedules to manage posts from Telegram.",
+          ].join("\n");
       replyMarkup = createMainMenuKeyboard();
     }
+  } else if (normalizedCommand === "link") {
+    return handleBindCommand(text, chatId);
+  } else if (normalizedCommand === "unbind") {
+    const revokeResult = await revokeTelegramBindingByChatId({ chatId });
+    replyText = revokeResult.ok
+      ? [
+          "✅ Wallet unlinked from this Telegram chat.",
+          "You can re-link anytime with /link <token>.",
+        ].join("\n")
+      : [
+          "ℹ️ No active wallet binding found for this chat.",
+          "If needed, link a wallet with /link <token>.",
+        ].join("\n");
+    replyMarkup = createMainMenuKeyboard();
   } else if (normalizedCommand === "create") {
     replyText = [
       "🧩 Create flow",
@@ -517,23 +1018,80 @@ async function handleInboundCommand(
     ].join("\n");
     replyMarkup = createMainMenuKeyboard();
   } else if (normalizedCommand === "dashboard") {
-    replyText = await buildDashboardSummaryText(chatId);
+    replyText = await buildDashboardMenuText(chatId);
     replyMarkup = createDashboardKeyboard();
   } else if (normalizedCommand === "schedules") {
-    replyText = await buildSchedulesText(
+    const schedulesView = await buildSchedulesText(
       chatId,
       parseSchedulesPageFromText(text),
     );
-    replyMarkup = createDashboardKeyboard();
+    replyText = schedulesView.text;
+    replyMarkup = createSchedulesKeyboard({
+      jobs: schedulesView.jobs,
+      page: schedulesView.page,
+      totalPages: schedulesView.totalPages,
+      startIndex: schedulesView.startIndex,
+    });
+  } else if (normalizedCommand === "postnow") {
+    const binding = await getTelegramBindingByChatId(chatId).catch(() => null);
+    if (!binding?.walletAddress) {
+      replyText = [
+        "❌ Wallet is not linked in this chat.",
+        "Run /link <token> first, then use /postnow <jobId>.",
+      ].join("\n");
+      replyMarkup = createMainMenuKeyboard();
+    } else {
+      const jobId = parseJobIdFromText(text);
+      if (!jobId) {
+        replyText = [
+          "Usage: /postnow <jobId>",
+          "Run /schedules to copy a job ID first.",
+        ].join("\n");
+      } else {
+        const job = await getWhatsAppJobById(jobId);
+        if (!job) {
+          replyText =
+            "❌ Job not found. Run /schedules and copy a valid job ID.";
+        } else if (job.status !== "queued") {
+          replyText = `ℹ️ This post is ${job.status} and cannot be triggered now.`;
+        } else if (
+          (job.ownerWalletAddress || "").toLowerCase() !==
+          binding.walletAddress.toLowerCase()
+        ) {
+          replyText = "❌ This job does not belong to your linked wallet.";
+        } else {
+          const shareText = buildShareableJobText(job);
+          const reference = createPublicJobReference(job.id);
+          replyText = [
+            "⚡ Post now options",
+            `Reference: ${reference}`,
+            "Choose where to post this now:",
+            "- Saved targets (scheduled recipients)",
+            "- Telegram chat copy",
+            "- WhatsApp share picker",
+          ].join("\n");
+          replyMarkup = createPostNowActionKeyboard({
+            jobId: job.id,
+            whatsappShareUrl: buildWhatsAppShareUrl(shareText),
+          });
+        }
+      }
+
+      if (!replyMarkup) {
+        replyMarkup = createDashboardKeyboard();
+      }
+    }
   } else if (normalizedCommand === "help") {
     replyText = [
       "Eazee Telegram Bot Commands:",
       "/start - Verify the bot is active",
       "/start_bind_<token> - Link wallet directly from app button",
-      "/link <token> - Link wallet using token from app",
+      "/link <token> - Paste the token from Eazee app to link wallet",
+      "/unbind - Unlink wallet from this Telegram chat",
       "/create - Open content creation flow",
       "/dashboard - Open dashboard actions",
       "/schedules <page> - View schedules with paging",
+      "/postnow <jobId> - Trigger one queued post immediately",
       "/help - Show available commands",
       "/status - Show bot + webhook status",
       "",
@@ -803,10 +1361,149 @@ async function handleUnsupportedCommand(
   };
 }
 
+async function triggerPostNowSavedTargets(input: {
+  chatId: string;
+  requestUrl?: string;
+  jobId: string;
+  walletAddress: string;
+}): Promise<{ text: string; error?: string }> {
+  const job = await getWhatsAppJobById(input.jobId);
+
+  if (!job) {
+    return {
+      text: "❌ Job not found. Run /schedules and choose a valid queued job.",
+    };
+  }
+
+  if (job.status !== "queued") {
+    return {
+      text: `ℹ️ This post is ${job.status} and cannot be triggered now.`,
+    };
+  }
+
+  if ((job.ownerWalletAddress || "").toLowerCase() !== input.walletAddress) {
+    return {
+      text: "❌ This job does not belong to your linked wallet.",
+    };
+  }
+
+  const marked = await scheduleQueuedJobForImmediateDispatch(job.id);
+  if (!marked) {
+    return {
+      text: "❌ Could not mark this job for immediate dispatch.",
+    };
+  }
+
+  const dispatchResult = input.requestUrl
+    ? await triggerImmediateDispatchCycle(input.requestUrl)
+    : { ok: false, error: "Missing request context" };
+
+  if (dispatchResult.ok) {
+    return {
+      text: [
+        "✅ Post queued for immediate send.",
+        `Job ID: ${job.id}`,
+        "Use /dashboard or /schedules to confirm status update.",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    text: [
+      "⚠️ Job marked as due now, but dispatch trigger did not complete.",
+      `Job ID: ${job.id}`,
+      dispatchResult.error ? `Reason: ${dispatchResult.error}` : "",
+      "The next dispatch cycle will still process it.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    error: dispatchResult.error,
+  };
+}
+
+async function sendPostCopyToCurrentChat(input: {
+  chatId: string;
+  jobId: string;
+  walletAddress: string;
+}): Promise<{ text: string; error?: string }> {
+  const job = await getWhatsAppJobById(input.jobId);
+
+  if (!job) {
+    return {
+      text: "❌ Job not found. Run /schedules and choose a valid queued job.",
+    };
+  }
+
+  if ((job.ownerWalletAddress || "").toLowerCase() !== input.walletAddress) {
+    return {
+      text: "❌ This job does not belong to your linked wallet.",
+    };
+  }
+
+  const lines = [job.caption];
+  const photoLinks = Array.isArray(job.photos) ? job.photos.slice(0, 3) : [];
+
+  if (photoLinks.length > 0) {
+    lines.push("", "Media:", ...photoLinks);
+  }
+
+  const buyNowUrl = buildTelegramBuyNowUrlForJob({
+    id: job.id,
+    productName: job.productName,
+    brief: job.brief,
+    postType: job.postType,
+    hasCeloPayment: Boolean(job.hasCeloPayment),
+    price: String(job.price || ""),
+    currency: String(job.currency || "cUSD"),
+    ownerWalletAddress: job.ownerWalletAddress,
+  });
+
+  const priceLabel =
+    `${String(job.price || "").trim()} ${String(job.currency || "cUSD").trim()}`.trim();
+
+  if (buyNowUrl && priceLabel) {
+    lines.push("", `💳 Buy now: ${priceLabel}`);
+  }
+
+  const postCopyResult = await sendTelegramTextMessage({
+    chatId: input.chatId,
+    text: lines.join("\n").trim(),
+    disableLinkPreview: true,
+    replyMarkup: buyNowUrl
+      ? {
+          inline_keyboard: [
+            [
+              {
+                text: `🛒 Buy Now · ${priceLabel || "cUSD"}`,
+                url: buyNowUrl,
+              },
+            ],
+          ],
+        }
+      : undefined,
+  });
+
+  if (!postCopyResult.ok) {
+    return {
+      text: "❌ Could not send post copy to this chat.",
+      error: postCopyResult.error || "Telegram send failed",
+    };
+  }
+
+  return {
+    text: [
+      "✅ Sent a copy of this post to your current Telegram chat.",
+      `Job ID: ${job.id}`,
+      "Tip: Use “Send now (saved targets)” to dispatch to scheduled recipients.",
+    ].join("\n"),
+  };
+}
+
 async function handleCallbackQuery(input: {
   callbackQueryId: string;
   callbackData: string;
   chatId: string;
+  requestUrl?: string;
 }): Promise<{
   handled: boolean;
   replyMode: "live" | "mock" | "none";
@@ -820,11 +1517,11 @@ async function handleCallbackQuery(input: {
     };
   }
 
-  const mappedCommand = getCommandFromCallbackData(input.callbackData);
+  const callbackAction = parseCallbackAction(input.callbackData);
 
   const callbackAck = await answerTelegramCallbackQuery({
     callbackQueryId: input.callbackQueryId,
-    text: mappedCommand ? "Opening..." : "Action received",
+    text: callbackAction.type === "none" ? "Action received" : "Opening...",
     cacheTime: 1,
   });
 
@@ -837,7 +1534,7 @@ async function handleCallbackQuery(input: {
     };
   }
 
-  if (!mappedCommand) {
+  if (callbackAction.type === "none") {
     return {
       handled: true,
       replyMode: callbackAck.mode,
@@ -845,19 +1542,214 @@ async function handleCallbackQuery(input: {
     };
   }
 
-  const commandResult = await handleInboundCommand(mappedCommand, input.chatId);
-  if (!commandResult.handled) {
+  if (callbackAction.type === "command") {
+    const commandResult = await handleInboundCommand(
+      callbackAction.command,
+      input.chatId,
+      "",
+      input.requestUrl || "",
+    );
+
+    if (!commandResult.handled) {
+      return {
+        handled: true,
+        replyMode: callbackAck.mode,
+        action: "callback_only",
+      };
+    }
+
+    return {
+      ...commandResult,
+      handled: true,
+      action: `callback:${callbackAction.command}`,
+    };
+  }
+
+  if (callbackAction.type === "dashboard") {
+    const replyText =
+      callbackAction.section === "menu"
+        ? await buildDashboardMenuText(input.chatId)
+        : callbackAction.section === "summary"
+          ? await buildDashboardSummaryText(input.chatId)
+          : callbackAction.section === "payments"
+            ? await buildPaymentsText(input.chatId)
+            : callbackAction.section === "receipts"
+              ? await buildReceiptsText(input.chatId)
+              : await buildDashboardMenuText(input.chatId);
+
+    const sendResult = await sendTelegramTextMessage({
+      chatId: input.chatId,
+      text: replyText,
+      disableLinkPreview: true,
+      replyMarkup: createDashboardKeyboard(),
+    });
+
     return {
       handled: true,
-      replyMode: callbackAck.mode,
-      action: "callback_only",
+      replyMode: sendResult.mode,
+      error: sendResult.ok
+        ? undefined
+        : sendResult.error || "Failed to send dashboard callback response",
+      action: `callback:dash:${callbackAction.section}`,
+    };
+  }
+
+  if (callbackAction.type === "schedules") {
+    const schedulesView = await buildSchedulesText(
+      input.chatId,
+      callbackAction.page,
+    );
+
+    const sendResult = await sendTelegramTextMessage({
+      chatId: input.chatId,
+      text: schedulesView.text,
+      disableLinkPreview: true,
+      replyMarkup: createSchedulesKeyboard({
+        jobs: schedulesView.jobs,
+        page: schedulesView.page,
+        totalPages: schedulesView.totalPages,
+        startIndex: schedulesView.startIndex,
+      }),
+    });
+
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      error: sendResult.ok
+        ? undefined
+        : sendResult.error || "Failed to send schedules callback response",
+      action: `callback:schedules:${schedulesView.page}`,
+    };
+  }
+
+  if (callbackAction.type === "post_now_pick") {
+    const binding = await getTelegramBindingByChatId(input.chatId).catch(
+      () => null,
+    );
+
+    if (!binding?.walletAddress) {
+      const sendResult = await sendTelegramTextMessage({
+        chatId: input.chatId,
+        text: "❌ Wallet is not linked in this chat. Run /link <token> first.",
+        disableLinkPreview: true,
+        replyMarkup: createMainMenuKeyboard(),
+      });
+
+      return {
+        handled: true,
+        replyMode: sendResult.mode,
+        error: sendResult.ok ? undefined : sendResult.error,
+        action: "callback:postnow:pick_unlinked",
+      };
+    }
+
+    const job = await getWhatsAppJobById(callbackAction.jobId);
+    if (!job) {
+      const sendResult = await sendTelegramTextMessage({
+        chatId: input.chatId,
+        text: "❌ Job not found. Open /schedules and select a valid queued job.",
+        disableLinkPreview: true,
+        replyMarkup: createDashboardKeyboard(),
+      });
+
+      return {
+        handled: true,
+        replyMode: sendResult.mode,
+        error: sendResult.ok ? undefined : sendResult.error,
+        action: "callback:postnow:pick_not_found",
+      };
+    }
+
+    const replyText = [
+      "⚡ Post now options",
+      `Reference: ${createPublicJobReference(job.id)}`,
+      "Choose where to post this immediately:",
+      "- Saved targets",
+      "- This Telegram chat",
+      "- WhatsApp share picker",
+    ].join("\n");
+
+    const sendResult = await sendTelegramTextMessage({
+      chatId: input.chatId,
+      text: replyText,
+      disableLinkPreview: true,
+      replyMarkup: createPostNowActionKeyboard({
+        jobId: job.id,
+        whatsappShareUrl: buildWhatsAppShareUrl(buildShareableJobText(job)),
+      }),
+    });
+
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      error: sendResult.ok
+        ? undefined
+        : sendResult.error || "Failed to send post-now options",
+      action: "callback:postnow:pick",
+    };
+  }
+
+  if (callbackAction.type === "post_now_run") {
+    const binding = await getTelegramBindingByChatId(input.chatId).catch(
+      () => null,
+    );
+
+    if (!binding?.walletAddress) {
+      const sendResult = await sendTelegramTextMessage({
+        chatId: input.chatId,
+        text: "❌ Wallet is not linked in this chat. Run /link <token> first.",
+        disableLinkPreview: true,
+        replyMarkup: createMainMenuKeyboard(),
+      });
+
+      return {
+        handled: true,
+        replyMode: sendResult.mode,
+        error: sendResult.ok ? undefined : sendResult.error,
+        action: "callback:postnow:run_unlinked",
+      };
+    }
+
+    const modeResult =
+      callbackAction.mode === "saved"
+        ? await triggerPostNowSavedTargets({
+            chatId: input.chatId,
+            requestUrl: input.requestUrl,
+            jobId: callbackAction.jobId,
+            walletAddress: binding.walletAddress.toLowerCase(),
+          })
+        : await sendPostCopyToCurrentChat({
+            chatId: input.chatId,
+            jobId: callbackAction.jobId,
+            walletAddress: binding.walletAddress.toLowerCase(),
+          });
+
+    const sendResult = await sendTelegramTextMessage({
+      chatId: input.chatId,
+      text: modeResult.text,
+      disableLinkPreview: true,
+      replyMarkup: createDashboardKeyboard(),
+    });
+
+    return {
+      handled: true,
+      replyMode: sendResult.mode,
+      error: sendResult.ok
+        ? modeResult.error
+        : sendResult.error ||
+          modeResult.error ||
+          "Failed to send post-now result",
+      action:
+        callbackAction.mode === "saved"
+          ? "callback:postnow:run_saved"
+          : "callback:postnow:run_telegram",
     };
   }
 
   return {
-    ...commandResult,
     handled: true,
-    action: `callback:${mappedCommand}`,
+    replyMode: callbackAck.mode,
+    action: "callback_noop",
   };
 }
 
@@ -922,19 +1814,19 @@ export async function POST(request: Request) {
           callbackQueryId: parsedUpdate.callbackQueryId,
           callbackData: parsedUpdate.callbackData,
           chatId: parsedUpdate.chatId,
+          requestUrl: request.url,
         })
-      : parsedUpdate.command === "link"
-        ? await handleBindCommand(parsedUpdate.text, parsedUpdate.chatId)
-        : parsedUpdate.command
-          ? await handleInboundCommand(
-              parsedUpdate.command,
-              parsedUpdate.chatId,
-              parsedUpdate.text,
-            )
-          : await handleInboundTextFallback(
-              parsedUpdate.text,
-              parsedUpdate.chatId,
-            );
+      : parsedUpdate.command
+        ? await handleInboundCommand(
+            parsedUpdate.command,
+            parsedUpdate.chatId,
+            parsedUpdate.text,
+            request.url,
+          )
+        : await handleInboundTextFallback(
+            parsedUpdate.text,
+            parsedUpdate.chatId,
+          );
 
     if (parsedUpdate.command && !commandResult.handled) {
       commandResult = await handleUnsupportedCommand(
