@@ -13,6 +13,43 @@ import {
 
 export const runtime = "nodejs";
 
+function isValidHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function buildTelegramBuyNowUrl(input: {
+  jobId: string;
+  productName: string;
+  price: string;
+  currency: string;
+  sellerAddress: string;
+  ownerWalletAddress: string;
+}): string {
+  const appUrl =
+    process.env.TELEGRAM_MINI_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    "";
+
+  if (!isValidHttpsUrl(appUrl)) {
+    return "";
+  }
+
+  const url = new URL("/pay", appUrl);
+  url.searchParams.set("jobId", input.jobId);
+  url.searchParams.set("productName", input.productName);
+  url.searchParams.set("price", input.price);
+  url.searchParams.set("currency", input.currency);
+  url.searchParams.set("seller", input.sellerAddress);
+  url.searchParams.set("ownerWalletAddress", input.ownerWalletAddress);
+
+  return url.toString();
+}
+
 type MessagingProvider = "whatsapp" | "telegram";
 
 function getMessagingProvider(): MessagingProvider {
@@ -140,15 +177,58 @@ async function dispatchDueJobs(request: Request) {
         continue;
       }
 
+      const recipient = target.recipient;
+
       const result =
         provider === "telegram"
-          ? await sendTelegramTextMessage({
-              chatId: target.recipient,
-              text: job.caption,
-              disableLinkPreview: true,
-            })
+          ? await (async () => {
+              const sellerAddress =
+                process.env.NEXT_PUBLIC_ESCROW_SELLER_ADDRESS?.trim() || "";
+              const productName =
+                String(
+                  job.productName || job.brief || job.postType || "Post",
+                ).trim() || "Post";
+              const isPaymentEnabled =
+                Boolean(job.hasCeloPayment) &&
+                Boolean(String(job.price || "").trim()) &&
+                Boolean(String(job.currency || "").trim()) &&
+                Boolean(sellerAddress);
+
+              const buyNowUrl = isPaymentEnabled
+                ? buildTelegramBuyNowUrl({
+                    jobId: job.id,
+                    productName,
+                    price: String(job.price || "").trim(),
+                    currency: String(job.currency || "cUSD").trim(),
+                    sellerAddress,
+                    ownerWalletAddress: String(
+                      job.ownerWalletAddress || sellerAddress,
+                    ).trim(),
+                  })
+                : "";
+
+              return sendTelegramTextMessage({
+                chatId: recipient,
+                text: isPaymentEnabled
+                  ? `${job.caption}\n\nTap Buy Now to pay on Celo.`
+                  : job.caption,
+                disableLinkPreview: true,
+                replyMarkup: buyNowUrl
+                  ? {
+                      inline_keyboard: [
+                        [
+                          {
+                            text: `🛒 Buy Now · ${String(job.price || "").trim()} ${String(job.currency || "cUSD").trim()}`,
+                            url: buyNowUrl,
+                          },
+                        ],
+                      ],
+                    }
+                  : undefined,
+              });
+            })()
           : await sendWhatsAppMessageWithDeadlineFallback({
-              to: target.recipient,
+              to: recipient,
               body: job.caption,
               fallbackTemplateName: job.templateName,
               fallbackTemplateLanguageCode: job.templateLanguageCode,
@@ -201,6 +281,7 @@ async function dispatchDueJobs(request: Request) {
       if (computedNextScheduledFor) {
         const recurringJob = await enqueueWhatsAppJob({
           caption: job.caption,
+          productName: job.productName,
           templateName: job.templateName,
           templateLanguageCode: job.templateLanguageCode,
           templateBodyParameters: job.templateBodyParameters,
