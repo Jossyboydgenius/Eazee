@@ -195,7 +195,7 @@ export default function ComposePage() {
     setShowPreview(true);
 
     try {
-      const caption = await fetchCaptionWithRetry({
+      const { caption, fallbackReason } = await fetchCaptionWithRetry({
         postType,
         brief,
         productName,
@@ -208,6 +208,13 @@ export default function ComposePage() {
       await animateCaptionTyping(caption);
       setGeneratedCaption(caption);
       console.log("[compose] Generated caption (full):", caption);
+      if (fallbackReason) {
+        toast({
+          title: "AI fallback mode",
+          description: `Caption used fallback template (${fallbackReason}).`,
+          variant: "error",
+        });
+      }
     } catch (err) {
       console.error(err);
       if (previousCaption) {
@@ -523,7 +530,14 @@ interface CaptionPayload {
   previousCaption: string;
 }
 
-async function fetchCaptionWithRetry(payload: CaptionPayload): Promise<string> {
+interface CaptionFetchResult {
+  caption: string;
+  fallbackReason: string | null;
+}
+
+async function fetchCaptionWithRetry(
+  payload: CaptionPayload,
+): Promise<CaptionFetchResult> {
   let attempt = 0;
   let lastError: unknown;
 
@@ -554,12 +568,17 @@ async function fetchCaptionWithRetry(payload: CaptionPayload): Promise<string> {
         );
       }
 
+      const fallbackReason =
+        res.headers.get("x-eazee-caption-fallback")?.trim() || null;
       const caption = await readCaptionText(res);
       if (caption.length < 20) {
         throw new Error("Generated caption is too short. Try again.");
       }
 
-      return caption;
+      return {
+        caption,
+        fallbackReason,
+      };
     } catch (error) {
       lastError = error;
       const message =
