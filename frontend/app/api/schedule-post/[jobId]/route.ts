@@ -170,6 +170,7 @@ export async function PATCH(
     const body = await request.json();
     const {
       caption,
+      productName,
       templateName,
       templateLanguageCode,
       templateBodyParameters,
@@ -214,6 +215,8 @@ export async function PATCH(
 
     const updated = await updateQueuedWhatsAppJob(jobId, {
       caption: String(caption),
+      productName:
+        typeof productName === "string" ? productName.trim() : undefined,
       templateName:
         typeof templateName === "string" ? templateName.trim() : undefined,
       templateLanguageCode:
@@ -250,6 +253,9 @@ export async function PATCH(
     }
 
     const scheduledTimestamp = Date.parse(updated.scheduledFor);
+    let immediateDispatchTriggered = false;
+    let immediateDispatchError: string | null = null;
+
     if (
       Number.isFinite(scheduledTimestamp) &&
       scheduledTimestamp <= Date.now() + 15_000
@@ -257,16 +263,39 @@ export async function PATCH(
       const dispatchUrl = new URL("/api/whatsapp/dispatch-due", request.url);
       const cronSecret = process.env.CRON_SECRET?.trim() || "";
 
-      void fetch(dispatchUrl.toString(), {
-        method: "POST",
-        headers: cronSecret
-          ? {
-              Authorization: `Bearer ${cronSecret}`,
-            }
-          : undefined,
-      }).catch((dispatchError) => {
+      try {
+        const dispatchResponse = await fetch(dispatchUrl.toString(), {
+          method: "POST",
+          headers: cronSecret
+            ? {
+                Authorization: `Bearer ${cronSecret}`,
+              }
+            : undefined,
+          cache: "no-store",
+        });
+
+        immediateDispatchTriggered = dispatchResponse.ok;
+
+        if (!dispatchResponse.ok) {
+          const dispatchPayload = await dispatchResponse
+            .json()
+            .catch(() => ({}));
+          immediateDispatchError =
+            typeof dispatchPayload?.error === "string"
+              ? dispatchPayload.error
+              : `Dispatch trigger failed with status ${dispatchResponse.status}`;
+          console.error("Immediate dispatch trigger failed:", {
+            status: dispatchResponse.status,
+            error: immediateDispatchError,
+          });
+        }
+      } catch (dispatchError) {
+        immediateDispatchError =
+          dispatchError instanceof Error
+            ? dispatchError.message
+            : "Unknown immediate dispatch error";
         console.error("Immediate dispatch trigger failed:", dispatchError);
-      });
+      }
     }
 
     return NextResponse.json({
@@ -275,6 +304,8 @@ export async function PATCH(
       scheduledFor: updated.scheduledFor,
       queuedTargets: updated.targets.length,
       status: updated.status,
+      immediateDispatchTriggered,
+      immediateDispatchError,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Update failed";
