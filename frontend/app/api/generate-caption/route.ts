@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
-const configuredApiKey = process.env.GEMINI_API_KEY?.trim() || "";
+const configuredApiKey =
+  process.env.GEMINI_API_KEY?.trim() ||
+  process.env.GOOGLE_API_KEY?.trim() ||
+  process.env.AI_API_KEY?.trim() ||
+  "";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const model = process.env.AI_MODEL || DEFAULT_GEMINI_MODEL;
+const MODEL_FALLBACKS = [DEFAULT_GEMINI_MODEL, "gemini-1.5-flash"];
 const MAX_RETRIES = 2;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const MIN_CAPTION_WORDS = 12;
@@ -189,12 +193,43 @@ function generateMockCaption(
 
   const opener = openers[tone]?.[0] || "🔥 Check this out!";
 
-  const caption = `${opener}\n\n${brief}\n\n📦 Quality guaranteed\n🚚 Fast delivery across Nigeria\n📱 DM to order now!\n\n${hasCeloPayment && price ? `💳 Pay with ${currency}: $${price}\nTap Buy Now 👇\n\n` : ""}#Eazee #${postType.charAt(0).toUpperCase() + postType.slice(1)} #MadeInNigeria`;
+  const caption = `${opener}\n\n${brief}\n\n📦 Quality guaranteed\n🚚 Fast delivery across Nigeria\n📱 DM to order now!\n\n${hasCeloPayment && price ? `💳 Pay with ${currency}: ${price} ${currency}\nTap Buy Now 👇\n\n` : ""}#Eazee #${postType.charAt(0).toUpperCase() + postType.slice(1)} #MadeInNigeria`;
 
   return caption;
 }
 
 async function createCompletionText(systemPrompt: string, userPrompt: string) {
+  const modelCandidates = resolveModelCandidates();
+  let lastError: unknown;
+
+  for (const candidateModel of modelCandidates) {
+    try {
+      return await createCompletionTextForModel(
+        systemPrompt,
+        userPrompt,
+        candidateModel,
+      );
+    } catch (error) {
+      lastError = error;
+
+      const status = getErrorStatus(error);
+      const shouldTryNextModel = (status === 400 || status === 404) &&
+        candidateModel !== modelCandidates[modelCandidates.length - 1];
+
+      if (!shouldTryNextModel) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Failed to generate caption");
+}
+
+async function createCompletionTextForModel(
+  systemPrompt: string,
+  userPrompt: string,
+  model: string,
+) {
   let attempt = 0;
   let lastError: unknown;
 
@@ -235,6 +270,7 @@ async function createCompletionText(systemPrompt: string, userPrompt: string) {
           status: response.status,
           body: errorBody,
           headers: response.headers,
+          model,
         };
       }
 
@@ -275,6 +311,12 @@ async function createCompletionText(systemPrompt: string, userPrompt: string) {
   }
 
   throw lastError;
+}
+
+function resolveModelCandidates(): string[] {
+  const preferredModel = String(process.env.AI_MODEL || "").trim();
+  const models = [preferredModel, ...MODEL_FALLBACKS].filter(Boolean);
+  return [...new Set(models)];
 }
 
 function extractGeminiText(data: unknown): string {
