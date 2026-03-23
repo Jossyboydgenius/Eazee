@@ -117,14 +117,24 @@ function mapDashboardJobToScheduledPost(
         .filter(Boolean)
     : [];
 
+  const normalizedProductName = String(job.productName || "").trim();
+  const normalizedBrief = String(job.brief || "").trim();
+  const derivedProductName =
+    normalizedProductName ||
+    (normalizedBrief
+      ? normalizedBrief.length > 64
+        ? `${normalizedBrief.slice(0, 64)}…`
+        : normalizedBrief
+      : "");
+
   return {
     id,
     photos: Array.isArray(job.photos)
       ? job.photos.map((value) => String(value || "")).filter(Boolean)
       : [],
-    productName: String(job.productName || "").trim(),
+    productName: derivedProductName,
     postType: String(job.postType || "").trim(),
-    brief: String(job.brief || "").trim(),
+    brief: normalizedBrief,
     tone: String(job.tone || "").trim(),
     caption: String(job.caption || "").trim(),
     templateName:
@@ -317,6 +327,8 @@ function PostsTab() {
   const { posts, setPosts, removePost, startEditingPost } = useEazeeStore();
   const walletAddress = account?.address?.trim().toLowerCase() || "";
   const [filter, setFilter] = useState<"all" | "upcoming" | "sent">("all");
+  const [visibleCount, setVisibleCount] = useState(6);
+  const [historySyncWarning, setHistorySyncWarning] = useState("");
   const [pendingDeletePostId, setPendingDeletePostId] = useState<string | null>(
     null,
   );
@@ -350,6 +362,11 @@ function PostsTab() {
       );
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          setHistorySyncWarning(
+            "Dashboard is showing locally cached posts. Reconnect wallet to sync all schedules.",
+          );
+        }
         return;
       }
 
@@ -362,10 +379,12 @@ function PostsTab() {
         .map((job) => mapDashboardJobToScheduledPost(job))
         .filter((post): post is ScheduledPost => Boolean(post));
 
-      if (mappedPosts.length > 0) {
-        setPosts(mappedPosts);
-      }
+      setPosts(mappedPosts);
+      setHistorySyncWarning("");
     } catch {
+      setHistorySyncWarning(
+        "Could not refresh dashboard from server. Showing saved local posts.",
+      );
       // Keep local fallback state when network/db call fails.
     }
   }, [walletAddress, setPosts]);
@@ -374,7 +393,13 @@ function PostsTab() {
     void loadDashboardHistoryPosts();
   }, [loadDashboardHistoryPosts]);
 
+  useEffect(() => {
+    setVisibleCount(6);
+  }, [filter]);
+
   const filtered = posts.filter((p) => filter === "all" || p.status === filter);
+  const visiblePosts = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
 
   const handleConfirmDelete = async () => {
     if (!pendingDeletePostId) {
@@ -451,6 +476,20 @@ function PostsTab() {
         </div>
       </div>
 
+      {historySyncWarning ? (
+        <motion.div
+          variants={item}
+          className="mb-4 rounded-xl border px-4 py-3 text-sm"
+          style={{
+            background: "var(--bg-secondary)",
+            borderColor: "var(--border)",
+            color: "var(--text-secondary)",
+          }}
+        >
+          {historySyncWarning}
+        </motion.div>
+      ) : null}
+
       {filtered.length === 0 ? (
         <motion.div variants={item} className="glass-card p-12 text-center">
           <p className="text-4xl mb-3">📭</p>
@@ -460,7 +499,7 @@ function PostsTab() {
         </motion.div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((post) => (
+          {visiblePosts.map((post) => (
             <PostCard
               key={post.id}
               post={post}
@@ -471,6 +510,22 @@ function PostsTab() {
               onDelete={() => setPendingDeletePostId(post.id)}
             />
           ))}
+
+          {hasMore ? (
+            <div className="pt-2">
+              <button
+                onClick={() => setVisibleCount((count) => count + 6)}
+                className="w-full rounded-xl border px-4 py-2.5 text-sm font-medium transition-all"
+                style={{
+                  borderColor: "var(--border)",
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                Show more schedules ({filtered.length - visibleCount} left)
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -582,7 +637,7 @@ function PostCard({
               className="text-sm font-semibold line-clamp-1"
               style={{ color: "var(--text-primary)" }}
             >
-              {post.productName || `${post.postType} post`}
+              {post.productName || post.brief || `${post.postType} post`}
             </p>
           </div>
 
